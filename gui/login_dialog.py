@@ -8,7 +8,15 @@ import tkinter as tk
 from tkinter import ttk
 import json
 
-from utils.config import LOGIN_URL, CAPTCHA_URL, GET_CONFIG_URL, SEND_CODE_URL, HEADERS, HEADERS_JSON
+from utils.config import LOGIN_URL, CAPTCHA_URL, GET_CONFIG_URL, SEND_CODE_URL, HOST_HEADER, HEADERS, HEADERS_JSON
+
+
+def _get_headers(base_headers):
+    """获取带有正确Host头的请求头"""
+    headers = base_headers.copy()
+    if HOST_HEADER:
+        headers['Host'] = HOST_HEADER
+    return headers
 from utils.crypto import rsa_encrypt
 
 

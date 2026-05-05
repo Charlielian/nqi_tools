@@ -74,6 +74,7 @@ CAPTCHA_DIR = _config['paths']['captcha_dir']
 LOG_DIR = _config['paths']['log_dir']
 
 BASE_URL = _config['server']['base_url']
+HOST_HEADER = BASE_URL.replace('https://', '')
 LOGIN_URL = f'{BASE_URL}/cas/login?service={BASE_URL}/pro-portal/'
 CAPTCHA_URL = f'{BASE_URL}/cas/captcha.jpg'
 GET_CONFIG_URL = f'{BASE_URL}/cas/getConfig'

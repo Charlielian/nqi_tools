@@ -80,9 +80,6 @@ def debug_print(*args, **kwargs):
             f.write(message)
 
 
-print = debug_print
-
-
 def ensure_dirs():
     """确保必要的目录存在"""
     from utils.config import OUTPUT_DIR, COOKIE_DIR, CAPTCHA_DIR

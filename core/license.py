@@ -24,84 +24,196 @@ SERIAL_PREFIX = "NQI-"  # 序列号前缀
 
 
 def get_macos_hw_info():
-    """获取macOS硬件信息"""
+    """获取macOS硬件信息 - 稳定性增强版"""
     hw_info = {"cpu_id": "", "board_sn": "", "disk_sn": "", "mac": ""}
+
+    # 主板序列号 - 最稳定的标识符
     try:
         cmd = ["ioreg", "-l", "-w0", "-r", "-c", "IOPlatformExpertDevice", "-d", "2"]
         output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8")
-        hw_info["board_sn"] = output.split('"IOPlatformSerialNumber" = ')[1].split('"')[1].strip()
+        if '"IOPlatformSerialNumber" = "' in output:
+            hw_info["board_sn"] = output.split('"IOPlatformSerialNumber" = ')[1].split('"')[1].strip()
+        elif "IOPlatformUUID" in output:
+            parts = output.split('"IOPlatformUUID" = "')
+            if len(parts) > 1:
+                hw_info["board_sn"] = parts[1].split('"')[0].strip()
+        else:
+            hw_info["board_sn"] = "unknown_board"
     except:
         hw_info["board_sn"] = "unknown_board"
+
+    # CPU信息 - 使用更稳定的获取方式
     try:
         cmd = ["sysctl", "-n", "machdep.cpu.brand_string"]
         hw_info["cpu_id"] = subprocess.check_output(cmd).decode("utf-8").strip()
     except:
-        hw_info["cpu_id"] = "unknown_cpu"
+        try:
+            # 备选方案：使用CPU型号标识符
+            cmd = ["sysctl", "-n", "machdep.cpu.model"]
+            hw_info["cpu_id"] = f"Intel-{subprocess.check_output(cmd).decode('utf-8').strip()}"
+        except:
+            hw_info["cpu_id"] = "unknown_cpu"
+
+    # 磁盘标识符 - 使用更稳定的标识
     try:
-        cmd = ["diskutil", "info", "/"]
+        cmd = ["system_profiler", "SPHardwareDataType"]
         output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8")
-        hw_info["disk_sn"] = output.split("Volume UUID:")[1].split("\n")[0].strip()
+        if "Hardware UUID:" in output:
+            hw_info["disk_sn"] = output.split("Hardware UUID:")[1].split("\n")[0].strip()
+        elif "Serial Number (system):" in output:
+            hw_info["disk_sn"] = output.split("Serial Number (system):")[1].split("\n")[0].strip()
+        else:
+            hw_info["disk_sn"] = "unknown_disk"
     except:
         hw_info["disk_sn"] = "unknown_disk"
+
+    # MAC地址 - 获取最稳定的那个
     try:
-        cmd = ["ifconfig", "en0"]
+        # 优先使用 en0（通常是主网络接口）
+        cmd = ["networksetup", "-getmacaddress", "en0"]
         output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8")
-        hw_info["mac"] = output.split("ether")[1].split(" ")[1].strip().replace(":", "")
+        if "MAC Address:" in output:
+            hw_info["mac"] = output.split("MAC Address:")[1].split(" ")[1].strip().replace(":", "").lower()
+        else:
+            # 备选方案
+            cmd = ["ifconfig", "en0"]
+            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8")
+            if "ether" in output:
+                hw_info["mac"] = output.split("ether")[1].split()[0].strip().replace(":", "").lower()
+            else:
+                hw_info["mac"] = "unknown_mac"
     except:
         hw_info["mac"] = "unknown_mac"
+
     return hw_info
 
 
 def get_windows_hw_info():
-    """获取Windows硬件信息"""
+    """获取Windows硬件信息 - 稳定性增强版"""
     try:
         import wmi
         c = wmi.WMI()
         hw_info = {"cpu_id": "", "board_sn": "", "disk_sn": "", "mac": ""}
+
+        # CPU标识
         cpu_list = c.Win32_Processor()
-        hw_info["cpu_id"] = cpu_list[0].ProcessorId.strip() if (cpu_list and cpu_list[0].ProcessorId) else "unknown_cpu"
+        if cpu_list and cpu_list[0].ProcessorId:
+            hw_info["cpu_id"] = cpu_list[0].ProcessorId.strip()
+        else:
+            hw_info["cpu_id"] = "unknown_cpu"
+
+        # 主板序列号
         board_list = c.Win32_BaseBoard()
-        hw_info["board_sn"] = board_list[0].SerialNumber.strip() if (board_list and board_list[0].SerialNumber) else "unknown_board"
+        if board_list and board_list[0].SerialNumber:
+            hw_info["board_sn"] = board_list[0].SerialNumber.strip()
+        else:
+            hw_info["board_sn"] = "unknown_board"
+
+        # 磁盘序列号 - 优先使用系统盘
         disk_list = c.Win32_DiskDrive()
-        hw_info["disk_sn"] = disk_list[0].SerialNumber.strip() if (disk_list and disk_list[0].SerialNumber) else "unknown_disk"
+        if disk_list:
+            # 选择第一个有效磁盘
+            for disk in disk_list:
+                if disk.SerialNumber:
+                    hw_info["disk_sn"] = disk.SerialNumber.strip()
+                    break
+        if not hw_info["disk_sn"] or hw_info["disk_sn"] == "unknown_disk":
+            hw_info["disk_sn"] = "unknown_disk"
+
+        # MAC地址 - 优先使用有线网络适配器
         nic_list = c.Win32_NetworkAdapterConfiguration(IPEnabled=True)
-        hw_info["mac"] = nic_list[0].MACAddress.strip().replace(":", "") if (nic_list and nic_list[0].MACAddress) else "unknown_mac"
+        if nic_list:
+            for nic in nic_list:
+                if nic.MACAddress:
+                    # 排除虚拟适配器
+                    adapter = [a for a in c.Win32_NetworkAdapter() if a.Index == nic.Index]
+                    if adapter and 'virtual' not in str(adapter[0].Name).lower():
+                        hw_info["mac"] = nic.MACAddress.strip().replace(":", "").lower()
+                        break
+        if not hw_info["mac"] or hw_info["mac"] == "unknown_mac":
+            hw_info["mac"] = "unknown_mac"
+
         return hw_info
     except:
         return {"cpu_id": "unknown", "board_sn": "unknown", "disk_sn": "unknown", "mac": "unknown"}
 
 
 def get_linux_hw_info():
-    """获取Linux硬件信息"""
+    """获取Linux硬件信息 - 稳定性增强版"""
     hw_info = {"cpu_id": "", "board_sn": "", "disk_sn": "", "mac": ""}
+
+    # CPU标识 - 使用processor id
     try:
         with open("/proc/cpuinfo", "r") as f:
-            for line in f.readlines():
-                if "serial" in line.lower():
-                    hw_info["cpu_id"] = line.split(":")[1].strip()
+            content = f.read()
+            # 优先获取 model name，它更稳定
+            for line in content.split('\n'):
+                if line.startswith('model name'):
+                    hw_info["cpu_id"] = line.split(':')[1].strip()
                     break
-        hw_info["cpu_id"] = hw_info["cpu_id"] if hw_info["cpu_id"] else "unknown_cpu"
+            # 如果没有model name，尝试processor id
+            if not hw_info["cpu_id"]:
+                for line in content.split('\n'):
+                    if line.startswith('processor'):
+                        hw_info["cpu_id"] = f"processor_{line.split(':')[1].strip()}"
+                        break
+        if not hw_info["cpu_id"]:
+            hw_info["cpu_id"] = "unknown_cpu"
     except:
         hw_info["cpu_id"] = "unknown_cpu"
+
+    # 主板序列号 - 多个备选路径
     try:
-        with open("/sys/devices/virtual/dmi/id/board_serial", "r") as f:
-            hw_info["board_sn"] = f.read().strip()
-    except:
-        hw_info["board_sn"] = "unknown_board"
-    try:
-        cmd = ["lsblk", "-o", "SERIAL", "-n", "/dev/sda"]
-        hw_info["disk_sn"] = subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode("utf-8").strip()
-    except:
-        hw_info["disk_sn"] = "unknown_disk"
-    try:
-        for path in ["/sys/class/net/eth0/address", "/sys/class/net/ens33/address"]:
+        board_serial_paths = [
+            "/sys/class/dmi/id/board_serial",
+            "/sys/devices/virtual/dmi/id/board_serial",
+        ]
+        for path in board_serial_paths:
             if os.path.exists(path):
                 with open(path, "r") as f:
-                    hw_info["mac"] = f.read().strip().replace(":", "")
-                break
-        hw_info["mac"] = hw_info.get("mac", "unknown_mac")
+                    hw_info["board_sn"] = f.read().strip()
+                    break
+        if not hw_info["board_sn"]:
+            hw_info["board_sn"] = "unknown_board"
+    except:
+        hw_info["board_sn"] = "unknown_board"
+
+    # 磁盘序列号 - 多个备选路径
+    try:
+        # 尝试获取系统盘的序列号
+        disk_paths = [
+            "/sys/class/block/sda/device/serial",
+            "/sys/class/block/nvme0n1/device/serial",
+        ]
+        for path in disk_paths:
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    hw_info["disk_sn"] = f.read().strip()
+                    break
+        if not hw_info["disk_sn"]:
+            hw_info["disk_sn"] = "unknown_disk"
+    except:
+        hw_info["disk_sn"] = "unknown_disk"
+
+    # MAC地址 - 获取第一个非环回的有线网络接口
+    try:
+        net_path = "/sys/class/net"
+        if os.path.exists(net_path):
+            for iface in os.listdir(net_path):
+                # 排除环回接口和虚拟接口
+                if iface.startswith('lo') or iface.startswith('docker') or iface.startswith('virbr'):
+                    continue
+                iface_path = os.path.join(net_path, iface)
+                addr_file = os.path.join(iface_path, "address")
+                if os.path.exists(addr_file):
+                    with open(addr_file, "r") as f:
+                        hw_info["mac"] = f.read().strip().replace(":", "").lower()
+                        break
+        if not hw_info.get("mac"):
+            hw_info["mac"] = "unknown_mac"
     except:
         hw_info["mac"] = "unknown_mac"
+
     return hw_info
 
 
@@ -119,8 +231,39 @@ def get_hw_info():
 
 
 def generate_machine_code(hw_info):
-    """生成机器码（基于硬件信息）"""
-    raw_str = f"{hw_info['cpu_id']}-{hw_info['board_sn']}-{hw_info['disk_sn']}-{hw_info['mac']}"
+    """生成机器码（基于硬件信息）
+
+    稳定性保证：
+    1. 所有字段统一转小写、去除空格和特殊字符
+    2. 按固定顺序拼接（已排序）
+    3. 不依赖任何日期或时间
+    4. SHA256哈希是确定性的
+    """
+    def normalize(value):
+        """规范化硬件信息：转小写、去除空格和不可见字符"""
+        if value is None:
+            return ""
+        # 转小写、去除空格、制表符、换行符等
+        return str(value).lower().strip().replace(" ", "").replace("\t", "").replace("\n", "").replace("\r", "")
+
+    # 按固定顺序处理字段，确保一致性
+    fields = [
+        normalize(hw_info.get('cpu_id', '')),
+        normalize(hw_info.get('board_sn', '')),
+        normalize(hw_info.get('disk_sn', '')),
+        normalize(hw_info.get('mac', ''))
+    ]
+
+    # 过滤空值，但保持顺序
+    fields = [f for f in fields if f and f != 'unknown']
+
+    # 使用固定分隔符拼接
+    raw_str = "-".join(fields)
+
+    # 空值保护：如果所有字段都是unknown或空，使用默认标识
+    if not raw_str or raw_str == "unknown-unknown-unknown-unknown":
+        return hashlib.sha256(b"fallback_machine_identifier").hexdigest()
+
     return hashlib.sha256(raw_str.encode("utf-8")).hexdigest()
 
 
@@ -402,10 +545,24 @@ def invalidate_license():
     """
     license_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', LICENSE_FILE)
     try:
-        # 写入一个过期的授权数据
-        # 格式: 4字节长度 + 序列号 + 签名 | 加密数据
         expired_date = "2020-01-01 00:00:00"
-        encrypted_data = base64.b64encode(aes_encrypt(expired_date + "|invalidated", b"GMCCLicenseV2Key"))
+
+        # 使用与 utils/crypto.py 一致的 AES 加密
+        AES_KEY = b"GMCCLicenseV2Key"
+        try:
+            from Crypto.Cipher import AES
+            from Crypto.Util.Padding import pad
+        except:
+            from Cryptodome.Cipher import AES
+            from Cryptodome.Util.Padding import pad
+
+        import os as os_module
+        iv = os_module.urandom(16)
+        cipher = AES.new(AES_KEY, AES.MODE_CBC, iv)
+        padded_data = pad((expired_date + "|invalidated").encode('utf-8'), 16)
+        encrypted = iv + cipher.encrypt(padded_data)
+        encrypted_data = base64.b64encode(encrypted)
+
         sn = "TIME_TAMPERED"
         sn_bytes = sn.encode('utf-8')
         sn_len_bytes = struct.pack(">I", len(sn_bytes))

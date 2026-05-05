@@ -46,6 +46,14 @@ config.yaml
 # 旧版目录
 旧版/
 
+# IDE配置
+.trae/
+.idea/
+.vscode/
+
+# 网络数据
+nqi.gmcc.net_20443/
+
 # 系统文件
 .DS_Store
 Thumbs.db

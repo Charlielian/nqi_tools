@@ -208,6 +208,8 @@ class JXCXQuery:
     def _build_payload_with_fields(self, table_key, fieldtype, where_conditions, api_type,
                                    dimension_override, fields_list):
         """使用字段列表构建payload（当API获取失败时使用）"""
+        if dimension_override is None:
+            dimension_override = {}
         geographicdimension = dimension_override.get('geographicdimension', '小区')
         timedimension = dimension_override.get('timedimension', '天')
         enodeb_field = dimension_override.get('enodebField', 'enodeb_id')
@@ -597,7 +599,8 @@ class JXCXQuery:
             epsfb_for_merge = epsfb_for_merge.rename(columns={'小区名称': '小区名称_epsfb'})
 
         if not merge_keys:
-            merged_df = pd.concat([volte_for_merge, epsfb_for_merge], axis=1)
+            # 当没有合并键时，使用简单的 concat
+            merged_df = pd.concat([volte_for_merge.reset_index(drop=True), epsfb_for_merge.reset_index(drop=True)], axis=1)
         else:
             merged_df = pd.merge(volte_for_merge, epsfb_for_merge, on=merge_keys, how='outer')
 
@@ -622,3 +625,119 @@ class JXCXQuery:
         logger.info("合并完成，最终数据: %d 行, %d 列", len(merged_df), len(merged_df.columns))
         result['merged'] = merged_df
         return result
+
+    def search(self, table_name, cities, start_date, end_date):
+        """统一的表格数据查询方法
+
+        不同表格只需在 TABLE_CONFIGS 中配置即可，无需修改此方法。
+
+        Args:
+            table_name: 显示的表格名称（如"5G干扰小区"）
+            cities: 地市列表
+            start_date: 开始日期（YYYY-MM-DD）
+            end_date: 结束日期（YYYY-MM-DD）
+
+        Returns:
+            DataFrame: 查询结果
+        """
+        import pandas as pd
+        from gui.widgets import TableConfig
+
+        # 1. 获取表格配置
+        table_config = TableConfig.get_table_config(table_name)
+        if not table_config:
+            logger.error("未找到表格配置: %s", table_name)
+            return pd.DataFrame()
+
+        logger.info("查询配置: %s", table_name)
+        logger.debug("  table_key: %s", table_config.get('table_key'))
+        logger.debug("  fieldtype: %s", table_config.get('fieldtype'))
+        logger.debug("  api_type: %s", table_config.get('api_type'))
+
+        # 2. 确保进入查询模块
+        if not self.enabled:
+            logger.debug("JXCX 未启用，尝试进入...")
+            if not self.enter_jxcx():
+                logger.error("无法进入即席查询模块")
+                return pd.DataFrame()
+
+        # 3. 构建查询条件
+        conditions = []
+        default_conditions = table_config.get('default_conditions', [])
+        if default_conditions:
+            conditions.extend([dict(c) for c in default_conditions])
+
+        # 非工参表添加日期条件
+        is_gongcan = table_config.get('is_gongcan', False)
+        if not is_gongcan:
+            conditions.append({'field': 'starttime', 'operator': '>=', 'value': start_date})
+            conditions.append({'field': 'starttime', 'operator': '<=', 'value': end_date})
+
+        # 添加地市条件
+        if cities:
+            if isinstance(cities, list):
+                city_value = ','.join(cities) if len(cities) > 1 else cities[0]
+            else:
+                city_value = cities
+            conditions.append({'field': 'city', 'operator': 'in', 'value': city_value})
+
+        logger.debug("查询条件: %s", conditions)
+
+        # 4. 构建payload
+        payload = self.build_payload_from_config(
+            table_config['table_key'],
+            table_config['fieldtype'],
+            conditions,
+            table_config.get('api_type', 'search'),
+            dimension_override=table_config.get('dimension'),
+            fields_override=table_config.get('fields')
+        )
+
+        if not payload:
+            logger.error("构建payload失败")
+            return pd.DataFrame()
+
+        # 5. 检查是否需要特殊处理（如4G语音小区需要VoLTE+EPSFB合并）
+        if table_config.get('is_4g_voice'):
+            logger.info("4G语音小区查询，需要VoLTE+EPSFB合并...")
+            volte_config = TableConfig.get_table_config('VoLTE小区监控预警')
+            epsfb_config = TableConfig.get_table_config('EPSFB小区监控预警')
+
+            if volte_config and epsfb_config:
+                # 构建VoLTE和EPSFB的payload
+                volte_conditions = [dict(c) for c in volte_config.get('default_conditions', [])]
+                if not volte_config.get('is_gongcan'):
+                    volte_conditions.append({'field': 'starttime', 'operator': '>=', 'value': start_date})
+                    volte_conditions.append({'field': 'starttime', 'operator': '<=', 'value': end_date})
+                if cities:
+                    volte_conditions.append({'field': 'city', 'operator': 'in', 'value': city_value})
+
+                volte_payload = self.build_payload_from_config(
+                    volte_config['table_key'], volte_config['fieldtype'], volte_conditions,
+                    volte_config.get('api_type', 'search'),
+                    dimension_override=volte_config.get('dimension'),
+                    fields_override=volte_config.get('fields')
+                )
+
+                epsfb_conditions = [dict(c) for c in epsfb_config.get('default_conditions', [])]
+                if not epsfb_config.get('is_gongcan'):
+                    epsfb_conditions.append({'field': 'starttime', 'operator': '>=', 'value': start_date})
+                    epsfb_conditions.append({'field': 'starttime', 'operator': '<=', 'value': end_date})
+                if cities:
+                    epsfb_conditions.append({'field': 'city', 'operator': 'in', 'value': city_value})
+
+                epsfb_payload = self.build_payload_from_config(
+                    epsfb_config['table_key'], epsfb_config['fieldtype'], epsfb_conditions,
+                    epsfb_config.get('api_type', 'search'),
+                    dimension_override=epsfb_config.get('dimension'),
+                    fields_override=epsfb_config.get('fields')
+                )
+
+                result = self._get_4g_voice_table_internal(volte_payload, epsfb_payload)
+                return result['merged']
+            else:
+                logger.error("未找到VoLTE或EPSFB配置")
+                return pd.DataFrame()
+
+        # 6. 普通表格查询
+        return self.get_table(payload, to_df=True)
