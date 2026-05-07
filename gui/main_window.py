@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 主窗口模块
-提供应用程序的主界面 - 现代化设计
+提供应用程序的主界面
 """
 
 import tkinter as tk
@@ -13,88 +13,59 @@ from datetime import datetime, timedelta
 import queue
 
 from gui.widgets import LogTextHandler, TableConfig, MultiSelectDropdown
+from gui.components import SearchableCombobox, CalendarDialog, Tooltip
+from gui.theme import colors, fonts, spacing
+from gui.first_run import check_first_run, show_first_run_wizard
 from core.auth import LoginManager
 from core.query import JXCXQuery
 from core.export import export_with_format
 from core.license import TimeMonitor, invalidate_license, verify_serial_number, write_license_from_serial
-from utils.logger import set_log_file, ensure_dirs
-from utils.config import LOG_DIR, EXPIRY_DATE, DEFAULT_USERNAME, DEFAULT_PASSWORD
+from core.license import (
+    generate_machine_code, get_hw_info, verify_with_user_code,
+    save_user_code, load_user_code, delete_user_code, get_user_code_info
+)
+from utils.logger import ensure_dirs, setup_report_logging
+from utils.config import LOG_DIR, OUTPUT_DIR, EXPIRY_DATE, DEFAULT_USERNAME, DEFAULT_PASSWORD
+import pandas as pd
 
 
-class NavButton:
-    """导航按钮类"""
-    def __init__(self, parent, icon, tooltip, nav_id, selected=False):
-        self.frame = tk.Frame(parent, bg='#252538' if selected else '#1a1a2e',
-                             cursor='hand2', width=54, height=54)
-        self.icon_label = tk.Label(self.frame, text=icon,
-                                 font=('Segoe UI Emoji', 18),
-                                 bg='#252538' if selected else '#1a1a2e',
-                                 fg='white')
-        self.icon_label.pack(pady=8)
-        self.selected = selected
-        self.nav_id = nav_id
-        self.tooltip = tooltip
+def check_and_setup_credentials():
+    """检查并设置凭证，如需首次运行引导则显示向导
 
-        # 绑定事件
-        self.frame.bind('<Button-1>', lambda e: self._on_click())
-        self.frame.bind('<Enter>', lambda e: self._on_enter())
-        self.frame.bind('<Leave>', lambda e: self._on_leave())
-
-    def _on_click(self):
-        if self.frame.winfo_exists():
-            self.frame.event_generate('<<NavClick>>', when='head')
-
-    def _on_enter(self):
-        if not self.selected and self.frame.winfo_exists():
-            self.frame.config(bg='#303050')
-            self.icon_label.config(bg='#303050')
-
-    def _on_leave(self):
-        if not self.selected and self.frame.winfo_exists():
-            self.frame.config(bg='#1a1a2e')
-            self.icon_label.config(bg='#1a1a2e')
-
-    def set_selected(self, selected):
-        self.selected = selected
-        if self.frame.winfo_exists():
-            if selected:
-                self.frame.config(bg='#252538')
-                self.icon_label.config(bg='#252538')
-            else:
-                self.frame.config(bg='#1a1a2e')
-                self.icon_label.config(bg='#1a1a2e')
+    Returns:
+        tuple: (needs_setup, credentials_dict)
+        - needs_setup=True: 需要显示设置向导，credentials_dict为None
+        - needs_setup=False: 使用默认/已保存的凭证
+    """
+    if check_first_run():
+        success, credentials = show_first_run_wizard()
+        if not success:
+            return True, None
+        return False, credentials
+    return False, None
 
 
 class NqiToolGUI:
-    """NQI工具主窗口 - 现代化设计"""
+    """NQI工具主窗口"""
 
     def __init__(self, root, expiry_time=None):
         self.root = root
         self.root.title("NQI工具")
-        self.root.geometry("1200x800")
-        self.root.minsize(1000, 700)
-
-        # 配置全局 ttk 样式，解决 tkcalendar 白板问题
-        try:
-            style = ttk.Style()
-            style.theme_use('clam')
-            # 确保 Calendar 弹出窗口有正确的背景色
-            style.configure('DateEntry.', background='white', fieldbackground='white')
-            style.map('DateEntry.', fieldbackground=['readonly', 'white'])
-        except:
-            pass
+        self.root.geometry("1100x800")
+        self.root.minsize(800, 600)
 
         self.expiry_time = datetime.strptime(EXPIRY_DATE, "%Y-%m-%d") if not expiry_time else expiry_time
         self.session = None
         self.jxcx = None
         self.query_thread = None
         self.is_querying = False
-        self._stop_requested = False
         self.log_queue = queue.Queue()
 
-        # 当前选中的侧边栏功能
-        self.current_view = "home"
-        self.nav_buttons = {}
+        # 进度预估时间相关
+        self._progress_start_time = None  # 查询开始时间
+        self._progress_last_update = None  # 上次更新时间
+        self._progress_last_value = 0     # 上次进度值
+        self._total_expected = 0           # 预期总进度
 
         self._setup_logging()
         self._create_widgets()
@@ -118,487 +89,317 @@ class NqiToolGUI:
             ensure_dirs()
             log_filename = f"NqiTool_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
             self.log_file_path = os.path.join(LOG_DIR, log_filename)
-            set_log_file(self.log_file_path)
 
-            self.logger = logging.getLogger()
+            # 使用新的报表日志系统
+            setup_report_logging(LOG_DIR, console=True)
+
+            # 设置主窗口日志记录器
+            self.logger = logging.getLogger('NqiTool')
             self.logger.setLevel(logging.DEBUG)
 
-            file_handler = logging.FileHandler(self.log_file_path, encoding='utf-8')
-            file_handler.setLevel(logging.DEBUG)
+            # 添加控制台输出
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
-                                        datefmt='%Y-%m-%d %H:%M:%S')
-            file_handler.setFormatter(formatter)
-            self.logger.addHandler(file_handler)
+                                        datefmt='%H:%M:%S')
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+
+            self.logger.info("日志系统初始化完成")
+            self.logger.info(f"日志根目录: {LOG_DIR}")
         except Exception as e:
-            self.logger = logging.getLogger()
+            self.logger = logging.getLogger('NqiTool')
             self.logger.setLevel(logging.DEBUG)
             self.logger.warning(f"初始化日志文件失败: {e}，日志将仅输出到界面")
 
     def _create_widgets(self):
-        """创建界面组件 - 现代化设计"""
-        # 主容器（水平分割：侧边栏 + 内容区）
-        self.main_container = tk.Frame(self.root, bg='#e9ecef')
-        self.main_container.pack(fill=tk.BOTH, expand=True)
+        """创建界面组件 - 使用现代化设计"""
+        # 顶部蓝色标题栏
+        self.header = tk.Frame(self.root, bg='#165DFF', height=60)
+        self.header.pack(fill=tk.X)
+        self.header.pack_propagate(False)
 
-        # 左侧工具栏（深色）
-        self._create_sidebar()
+        # 标题栏左侧 - Logo和标题
+        left_frame = tk.Frame(self.header, bg='#165DFF')
+        left_frame.pack(side=tk.LEFT, padx=25, pady=12)
 
-        # 右侧内容区
-        self._create_content_area()
+        icon_frame = tk.Frame(left_frame, bg='#1a6ce8', width=36, height=36)
+        icon_frame.pack(side=tk.LEFT, padx=(0, 12))
+        icon_frame.pack_propagate(False)
+        icon_label = tk.Label(icon_frame, text="📊", font=('Segoe UI Emoji', 18),
+                             bg='#1a6ce8', fg='white')
+        icon_label.place(relx=0.5, rely=0.5, anchor='center')
 
-    def _create_sidebar(self):
-        """创建左侧深色工具栏"""
-        # 侧边栏容器
-        self.sidebar = tk.Frame(self.main_container, bg='#1a1a2e', width=70)
-        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        self.sidebar.pack_propagate(False)
+        title_frame = tk.Frame(left_frame, bg='#165DFF')
+        title_frame.pack(side=tk.LEFT)
 
-        # 顶部Logo区域
-        logo_frame = tk.Frame(self.sidebar, bg='#1a1a2e', height=80)
-        logo_frame.pack(fill=tk.X)
-        logo_frame.pack_propagate(False)
+        title = tk.Label(title_frame, text="NQI工具",
+                        font=('Microsoft YaHei UI', 18, 'bold'),
+                        bg='#165DFF', fg='white')
+        title.pack(anchor='w')
 
-        # Logo图标
-        logo_icon = tk.Label(logo_frame, text="N",
-                           font=('Arial', 24, 'bold'),
-                           bg='#165DFF', fg='white',
-                           width=3, height=1)
-        logo_icon.pack(pady=15)
+        version = tk.Label(title_frame, text="NqiTool v1.0",
+                          font=('Microsoft YaHei UI', 9),
+                          bg='#1a6ce8', fg='white',
+                          padx=8, pady=2)
+        version.pack(anchor='w', pady=(2, 0))
 
-        # 分割线
-        sep = tk.Frame(self.sidebar, bg='#2d2d44', height=1)
-        sep.pack(fill=tk.X, padx=10)
+        # 标题栏右侧 - 状态和授权时间
+        self.right_frame = tk.Frame(self.header, bg='#165DFF')
+        self.right_frame.pack(side=tk.RIGHT, padx=25, pady=12)
 
-        # 导航按钮区域
-        nav_frame = tk.Frame(self.sidebar, bg='#1a1a2e')
-        nav_frame.pack(fill=tk.Y, expand=False, pady=10)
-
-        # 导航按钮配置
-        nav_items = [
-            {'icon': '🏠', 'id': 'home', 'tip': '首页'},
-            {'icon': '📊', 'id': 'query', 'tip': '数据查询'},
-            {'icon': '📁', 'id': 'export', 'tip': '导出管理'},
-            {'icon': '⚙', 'id': 'settings', 'tip': '设置'},
-            {'icon': 'ℹ', 'id': 'about', 'tip': '关于'},
-        ]
-
-        for i, item in enumerate(nav_items):
-            btn = NavButton(nav_frame, item['icon'], item['tip'], item['id'], selected=(i == 0))
-            btn.frame.pack(pady=3)
-            # 绑定导航事件
-            btn.frame.bind('<<NavClick>>', lambda e, bid=item['id']: self._on_nav_click(bid))
-            self.nav_buttons[item['id']] = btn
-
-        # 底部状态区域
-        bottom_frame = tk.Frame(self.sidebar, bg='#1a1a2e', height=60)
-        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        bottom_frame.pack_propagate(False)
-
-        # 授权状态指示
-        self.sidebar_status = tk.Label(bottom_frame, text="●",
-                                      font=('Arial', 10),
-                                      bg='#1a1a2e', fg='#22c55e')
-        self.sidebar_status.pack(pady=5)
+        # 授权过期时间标签
+        self.license_label = tk.Label(self.right_frame, text="",
+                              font=('Microsoft YaHei UI', 9),
+                              bg='#165DFF', fg='#e0e7ff')
+        self.license_label.pack(side=tk.LEFT, padx=(0, 15))
 
         # 激活按钮
-        activate_btn = tk.Button(bottom_frame, text="激活",
-                                font=('Microsoft YaHei UI', 8),
-                                bg='#165DFF', fg='white', bd=0,
-                                cursor='hand2', padx=15, pady=4,
-                                command=self._show_activate_window)
-        activate_btn.pack(pady=5)
+        self.activate_btn = tk.Button(self.right_frame, text="🎫 激活",
+                              font=('Microsoft YaHei UI', 9),
+                              bg='#22c55e', fg='white', bd=0,
+                              cursor='hand2', relief='flat', padx=10, pady=4,
+                              command=self._show_activate_window)
+        self.activate_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-    def _on_nav_click(self, nav_id):
-        for bid, btn in self.nav_buttons.items():
-            btn.set_selected(bid == nav_id)
-        self.current_view = nav_id
-        if nav_id == 'home':
-            self._show_home_view()
-        elif nav_id == 'query':
-            self._show_home_view()
-        elif nav_id == 'export':
-            self._show_export_view()
-        elif nav_id == 'settings':
-            self._show_settings_view()
-        elif nav_id == 'about':
-            self._show_about_view()
+        # 状态指示器
+        self.status_dot = tk.Label(self.right_frame, text="●", font=('Arial', 14),
+                            bg='#165DFF', fg='#a5b4fc')
+        self.status_dot.pack(side=tk.LEFT)
+        self.status_text = tk.Label(self.right_frame, text="系统就绪",
+                              font=('Microsoft YaHei UI', 10),
+                              bg='#165DFF', fg='white')
+        self.status_text.pack(side=tk.LEFT, padx=(6, 0))
 
-    def _create_content_area(self):
-        """创建右侧内容区域"""
-        # 内容区容器
-        self.content_area = tk.Frame(self.main_container, bg='#e9ecef')
-        self.content_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 主内容区域
+        self.main_container = tk.Frame(self.root, bg='#f9fafb')
+        self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        # 内容页面容器
-        self.content_pages = tk.Frame(self.content_area, bg='#e9ecef')
-        self.content_pages.pack(fill=tk.BOTH, expand=True, padx=20, pady=(10, 10))
+        content = tk.Frame(self.main_container, bg='#f9fafb')
+        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
 
-        # 显示首页
-        self._show_home_view()
+        # 第一行：登录配置卡片（单行紧凑）
+        self._build_login_card(content)
 
-    def _show_home_view(self):
-        """显示首页视图"""
-        # 清空并重建内容
-        for widget in self.content_pages.winfo_children():
-            widget.destroy()
+        # 第二行：查询参数 + 提取参数（左右分布）
+        params_row = tk.Frame(content, bg='#f9fafb')
+        params_row.pack(fill=tk.X, pady=(0, 10))
 
-        # 登录配置卡片（顶部）
-        self._build_login_card_new()
+        # 左侧：查询参数卡片
+        self._build_query_card(params_row)
 
-        # 下半部分：使用grid布局实现左右分栏
-        bottom_frame = tk.Frame(self.content_pages, bg='#e9ecef')
-        bottom_frame.pack(fill=tk.BOTH, expand=True, pady=(15, 0))
+        # 右侧：提取参数卡片
+        self._build_params_card(params_row)
 
-        # 配置左右两列的权重比例（左侧30%，右侧70%）
-        bottom_frame.grid_rowconfigure(0, weight=1)
-        bottom_frame.grid_columnconfigure(0, weight=3)  # 左侧3份
-        bottom_frame.grid_columnconfigure(1, weight=7)  # 右侧7份
+        # 底部：进度和日志
+        self._build_bottom_section(content)
 
-        # 左侧区域：查询参数 + 提取参数
-        left_frame = tk.Frame(bottom_frame, bg='#e9ecef')
-        left_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
+        # 更新授权显示
+        self._update_license_display()
 
-        # 查询参数卡片
-        self._build_query_card_new(left_frame)
-
-        # 提取参数卡片
-        self._build_params_card_new(left_frame)
-
-        # 右侧区域：数据预览 + 日志
-        right_frame = tk.Frame(bottom_frame, bg='#e9ecef')
-        right_frame.grid(row=0, column=1, sticky='nsew')
-
-        # 数据预览卡片
-        self._build_preview_card(right_frame)
-
-        # 日志卡片
-        self._build_log_card(right_frame)
-
-        # 底部进度条（占满宽度）
-        self._build_progress_section()
-
-    def _show_query_view(self):
-        self._show_home_view()
-
-    def _show_export_view(self):
-        for widget in self.content_pages.winfo_children():
-            widget.destroy()
-        card = self._build_card_shadow(self.content_pages, "📁 导出管理", "📁")
-        body = tk.Frame(card, bg='white')
-        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
-
-        toolbar = tk.Frame(body, bg='white')
-        toolbar.pack(fill=tk.X, pady=(0, 8))
-        tk.Button(toolbar, text="🔄 刷新", font=('Microsoft YaHei UI', 8), bg='#e9ecef', fg='#495057', bd=0, cursor='hand2', padx=10, pady=3, command=self._refresh_export_list).pack(side=tk.LEFT, padx=(0, 6))
-        tk.Button(toolbar, text="📂 打开目录", font=('Microsoft YaHei UI', 8), bg='#e9ecef', fg='#495057', bd=0, cursor='hand2', padx=10, pady=3, command=self.open_output_dir).pack(side=tk.LEFT)
-
-        columns = ('文件名', '大小', '修改时间')
-        tree = ttk.Treeview(body, columns=columns, show='headings', height=15)
-        tree.heading('文件名', text='文件名')
-        tree.heading('大小', text='大小')
-        tree.heading('修改时间', text='修改时间')
-        tree.column('文件名', width=300)
-        tree.column('大小', width=100)
-        tree.column('修改时间', width=180)
-        tree.pack(fill=tk.BOTH, expand=True)
-        self.export_tree = tree
-        self._refresh_export_list()
-
-    def _refresh_export_list(self):
-        if not hasattr(self, 'export_tree'):
-            return
-        for item in self.export_tree.get_children():
-            self.export_tree.delete(item)
-        output_dir = os.path.join(os.getcwd(), 'data_output')
-        if os.path.exists(output_dir):
-            for f in sorted(os.listdir(output_dir), reverse=True):
-                filepath = os.path.join(output_dir, f)
-                if os.path.isfile(filepath):
-                    size = os.path.getsize(filepath)
-                    if size > 1024 * 1024:
-                        size_str = f"{size / 1024 / 1024:.1f} MB"
-                    else:
-                        size_str = f"{size / 1024:.1f} KB"
-                    mtime = datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M:%S')
-                    self.export_tree.insert('', 'end', values=(f, size_str, mtime))
-
-    def _show_settings_view(self):
-        for widget in self.content_pages.winfo_children():
-            widget.destroy()
-        card = self._build_card_shadow(self.content_pages, "⚙ 设置", "⚙")
-        body = tk.Frame(card, bg='white')
-        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
-
-        dir_frame = tk.Frame(body, bg='white')
-        dir_frame.pack(fill=tk.X, pady=(0, 12))
-        tk.Label(dir_frame, text="输出目录", font=('Microsoft YaHei UI', 9, 'bold'), bg='white', fg='#495057').pack(anchor='w')
-        dir_inner = tk.Frame(dir_frame, bg='white')
-        dir_inner.pack(fill=tk.X, pady=(4, 0))
-        self.output_dir_var = tk.StringVar(value=os.path.join(os.getcwd(), 'data_output'))
-        tk.Entry(dir_inner, textvariable=self.output_dir_var, font=('Microsoft YaHei UI', 9), bg='#f8f9fa', relief='flat', bd=0).pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4, padx=(0, 6))
-        tk.Button(dir_inner, text="浏览", font=('Microsoft YaHei UI', 8), bg='#e9ecef', fg='#495057', bd=0, cursor='hand2', padx=10, pady=3, command=self._browse_output_dir).pack(side=tk.LEFT)
-
-        city_frame = tk.Frame(body, bg='white')
-        city_frame.pack(fill=tk.X, pady=(0, 12))
-        tk.Label(city_frame, text="默认地市", font=('Microsoft YaHei UI', 9, 'bold'), bg='white', fg='#495057').pack(anchor='w')
-
-        tk.Button(body, text="保存设置", font=('Microsoft YaHei UI', 9, 'bold'), bg='#165DFF', fg='white', bd=0, cursor='hand2', padx=20, pady=6, command=self._save_settings).pack(anchor='w', pady=(12, 0))
-
-    def _browse_output_dir(self):
-        from tkinter import filedialog
-        directory = filedialog.askdirectory()
-        if directory:
-            self.output_dir_var.set(directory)
-
-    def _save_settings(self):
-        self.log("设置已保存", "SUCCESS")
-
-    def _show_about_view(self):
-        for widget in self.content_pages.winfo_children():
-            widget.destroy()
-        card = self._build_card_shadow(self.content_pages, "ℹ 关于", "ℹ")
-        body = tk.Frame(card, bg='white')
-        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
-
-        center = tk.Frame(body, bg='white')
-        center.place(relx=0.5, rely=0.5, anchor='center')
-
-        tk.Label(center, text="N", font=('Arial', 36, 'bold'), bg='#165DFF', fg='white', width=2, height=1).pack(pady=(0, 15))
-        tk.Label(center, text="NQI数据提取工具", font=('Microsoft YaHei UI', 16, 'bold'), bg='white', fg='#1a1a2e').pack()
-        tk.Label(center, text="版本 2.0.0", font=('Microsoft YaHei UI', 10), bg='white', fg='#6c757d').pack(pady=(4, 0))
-        tk.Label(center, text="NQI平台数据提取与导出工具", font=('Microsoft YaHei UI', 9), bg='white', fg='#adb5bd').pack(pady=(8, 0))
-        if self.expiry_time:
-            tk.Label(center, text=f"授权到期: {self.expiry_time.strftime('%Y-%m-%d')}", font=('Microsoft YaHei UI', 9), bg='white', fg='#6c757d').pack(pady=(4, 0))
-
-    def _build_card_shadow(self, parent, title=None, icon=None):
-        """创建带阴影效果的卡片容器"""
-        # 外层阴影框架
-        shadow_frame = tk.Frame(parent, bg='#dee2e6')
-        shadow_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 12))
-
-        # 白色内容卡片
-        card = tk.Frame(shadow_frame, bg='white')
-        card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+    def _build_card(self, parent, title=None, **kwargs):
+        """创建卡片容器
+        Args:
+            parent: 父容器
+            title: 卡片标题（可选）
+            compact: 是否紧凑模式（无标题边框）
+        """
+        card = tk.Frame(parent, bg='white', bd=0, relief='flat')
 
         if title:
             header = tk.Frame(card, bg='white')
-            header.pack(fill=tk.X, padx=16, pady=(12, 0))
+            header.pack(fill=tk.X, padx=20, pady=(16, 0))
 
-            title_frame = tk.Frame(header, bg='white')
-            title_frame.pack(side=tk.LEFT)
+            label = tk.Label(header, text=title,
+                            font=('Microsoft YaHei UI', 13, 'bold'),
+                            bg='white', fg='#374151', anchor='w')
+            label.pack(fill='x')
 
-            if icon:
-                icon_lbl = tk.Label(title_frame, text=icon,
-                                   font=('Segoe UI Emoji', 11),
-                                   bg='white')
-                icon_lbl.pack(side=tk.LEFT, padx=(0, 6))
-
-            title_lbl = tk.Label(title_frame, text=title,
-                                font=('Microsoft YaHei UI', 12, 'bold'),
-                                bg='white', fg='#1a1a2e')
-            title_lbl.pack(side=tk.LEFT)
-
-            separator = tk.Frame(card, bg='#f1f3f5', height=1)
-            separator.pack(fill=tk.X, padx=16, pady=(8, 0))
+            separator = tk.Frame(card, bg='#f3f4f6', height=1)
+            separator.pack(fill=tk.X, padx=20, pady=(12, 0))
 
         return card
 
-    def _build_login_card_new(self):
-        """构建登录配置卡片（顶部栏）"""
-        # 登录栏背景
-        login_bar = tk.Frame(self.content_pages, bg='white', height=60)
-        login_bar.pack(fill=tk.X)
-        login_bar.pack_propagate(False)
+    def _build_login_card(self, parent):
+        """构建登录配置卡片（一行紧凑布局）"""
+        card = self._build_card(parent, "🔐 登录配置")
+        card.pack(fill=tk.X, pady=(0, 10))
 
-        # 左侧：用户名密码
-        left_area = tk.Frame(login_bar, bg='white')
-        left_area.pack(side=tk.LEFT, padx=20, pady=10)
+        body = tk.Frame(card, bg='white')
+        body.pack(fill=tk.X, padx=16, pady=10)
+
+        # 单行布局：用户名 | 密码 | 登录状态 | 按钮
+        row = tk.Frame(body, bg='white')
+        row.pack(fill=tk.X)
 
         # 用户名
-        user_frame = tk.Frame(left_area, bg='white')
-        user_frame.pack(side=tk.LEFT, padx=(0, 20))
+        user_frame = tk.Frame(row, bg='white')
+        user_frame.pack(side=tk.LEFT, padx=(0, 12))
 
-        tk.Label(user_frame, text="用户名",
-                font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#6c757d').pack(anchor='w')
-
-        user_entry_frame = tk.Frame(user_frame, bg='#f8f9fa', bd=1,
-                                   relief='solid', highlightthickness=0)
-        user_entry_frame.pack(pady=(2, 0), ipady=1)
-
-        self.username_entry = tk.Entry(user_entry_frame,
-                             font=('Microsoft YaHei UI', 9),
-                             relief='flat', bg='#f8f9fa', bd=0, width=14)
+        tk.Label(user_frame, text="用户名", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+        self.username_entry = tk.Entry(user_frame, font=('Microsoft YaHei UI', 10),
+                             relief='flat', bg='#f8f9fa', bd=0, width=15)
         self.username_entry.insert(0, DEFAULT_USERNAME)
-        self.username_entry.pack(padx=8, pady=2)
+        self.username_entry.pack(fill=tk.X, pady=(2, 0), ipady=4)
 
         # 密码
-        pass_frame = tk.Frame(left_area, bg='white')
-        pass_frame.pack(side=tk.LEFT, padx=(0, 20))
+        pass_frame = tk.Frame(row, bg='white')
+        pass_frame.pack(side=tk.LEFT, padx=(0, 12))
 
-        tk.Label(pass_frame, text="密码",
-                font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#6c757d').pack(anchor='w')
-
-        pass_entry_frame = tk.Frame(pass_frame, bg='#f8f9fa', bd=1,
-                                   relief='solid', highlightthickness=0)
-        pass_entry_frame.pack(pady=(2, 0), ipady=1)
-
-        self.password_entry = tk.Entry(pass_entry_frame,
-                             font=('Microsoft YaHei UI', 9),
-                             show="●", relief='flat', bg='#f8f9fa', bd=0, width=12)
+        tk.Label(pass_frame, text="密码", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+        self.password_entry = tk.Entry(pass_frame, font=('Microsoft YaHei UI', 10),
+                             show="●", relief='flat', bg='#f8f9fa', bd=0, width=15)
         self.password_entry.insert(0, DEFAULT_PASSWORD)
-        self.password_entry.pack(side=tk.LEFT, padx=(8, 0), pady=2)
+        self.password_entry.pack(fill=tk.X, pady=(2, 0), ipady=4)
 
-        self._password_visible = False
-        self.toggle_pwd_btn = tk.Label(pass_entry_frame, text="👁",
-                                      font=('Segoe UI Emoji', 9),
-                                      bg='#f8f9fa', fg='#6c757d',
-                                      cursor='hand2')
-        self.toggle_pwd_btn.pack(side=tk.LEFT, padx=(2, 8), pady=2)
-        self.toggle_pwd_btn.bind('<Button-1>', lambda e: self._toggle_password_visibility())
+        # 登录状态图标和标签
+        self.login_status_icon = tk.Label(row, text="○", font=('Arial', 12, 'bold'),
+                              bg='white', fg='#80868b')
+        self.login_status_icon.pack(side=tk.LEFT, padx=(10, 4), pady=0)
 
-        # 中间区域
-        center_area = tk.Frame(login_bar, bg='white')
-        center_area.pack(side=tk.LEFT, padx=(0, 20), pady=10)
-
-        # 登录状态
-        status_inner = tk.Frame(center_area, bg='white')
-        status_inner.pack()
-
-        self.login_dot = tk.Label(status_inner, text="○",
-                                 font=('Arial', 10, 'bold'),
-                                 bg='white', fg='#adb5bd')
-        self.login_dot.pack(side=tk.LEFT)
-
-        self.login_status_lbl = tk.Label(status_inner, text="未登录",
-                                        font=('Microsoft YaHei UI', 9),
-                                        bg='white', fg='#6c757d')
-        self.login_status_lbl.pack(side=tk.LEFT, padx=(4, 0))
-
-        # 右侧区域
-        right_area = tk.Frame(login_bar, bg='white')
-        right_area.pack(side=tk.RIGHT, padx=20, pady=10)
+        self.login_status_lbl = tk.Label(row, text="未登录",
+                             font=('Microsoft YaHei UI', 10, 'bold'),
+                             bg='white', fg='#80868b')
+        self.login_status_lbl.pack(side=tk.LEFT, padx=(0, 10), pady=0)
 
         # 登录按钮
-        self.login_btn = tk.Button(right_area, text="登录",
-                             font=('Microsoft YaHei UI', 9, 'bold'),
-                             bg='#165DFF', fg='white', bd=0,
-                             cursor='hand2', padx=20, pady=4,
+        self.login_btn = tk.Button(row, text="登录",
+                             font=('Microsoft YaHei UI', 10, 'bold'),
+                             bg='#165DFF', fg='white', bd=1,
+                             relief='raised',
+                             cursor='arrow', padx=20, pady=6,
                              command=self._on_login)
         self.login_btn.pack(side=tk.LEFT)
 
-        # 授权信息（登录按钮后）
-        self.license_label = tk.Label(right_area, text="",
-                              font=('Microsoft YaHei UI', 8),
-                              bg='white', fg='#6c757d')
-        self.license_label.pack(side=tk.LEFT, padx=(10, 0))
-
-        self._update_license_display()
-
-    def _toggle_password_visibility(self):
-        self._password_visible = not self._password_visible
-        if self._password_visible:
-            self.password_entry.config(show="")
-            self.toggle_pwd_btn.config(fg='#165DFF')
-        else:
-            self.password_entry.config(show="●")
-            self.toggle_pwd_btn.config(fg='#6c757d')
-
-    # 数据分类与数据表的映射关系
-    TABLE_CATEGORIES = {
-        '干扰': ['5G干扰小区', '4G干扰小区'],
-        '容量': ['5G小区容量报表', '重要场景-天'],
-        '工参': ['5G小区工参报表', '4G小区工参报表'],
-        'MR覆盖': ['5GMR覆盖-小区天', '4GMR覆盖-小区天'],
-        '语音报表': ['VoLTE小区监控预警', 'VONR小区监控预警', 'EPSFB小区监控预警'],
-        '小区性能': ['5G小区性能KPI报表', '4G小区性能KPI报表'],
-        '全程完好率': ['4G全程完好率报表', '5G全程完好率报表'],
-        '语音小区': ['4G语音小区', '5G语音小区'],
-    }
-
-    def _build_query_card_new(self, parent):
-        """构建查询参数卡片"""
-        card = self._build_card_shadow(parent, "查询参数", "🔍")
+    def _build_query_card(self, parent):
+        """构建查询参数卡片（紧凑布局）"""
+        card = self._build_card(parent, "🔍 查询参数")
+        card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
 
         body = tk.Frame(card, bg='white')
-        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 6))
+        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
 
-        # 数据分类
-        cat_label = tk.Label(body, text="数据分类",
-                           font=('Microsoft YaHei UI', 8, 'bold'),
-                           bg='white', fg='#495057')
-        cat_label.pack(anchor='w', pady=(0, 4))
+        # ========== 数据分类（横向排列）==========
+        cat_frame = tk.Frame(body, bg='white')
+        cat_frame.pack(fill=tk.X, pady=(0, 8))
 
-        # 分类按钮组 - 使用简单的按钮样式
+        tk.Label(cat_frame, text="数据分类：", font=('Microsoft YaHei UI', 9, 'bold'),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=(0, 6))
+
         self.category_vars = {}
-        self.category_btns = {}
         categories = ["干扰", "容量", "工参", "MR覆盖", "语音报表", "小区性能", "全程完好率", "语音小区"]
 
-        cat_btn_frame = tk.Frame(body, bg='white')
-        cat_btn_frame.pack(fill=tk.X, pady=(0, 6))
-
-        for i, name in enumerate(categories):
+        for name in categories:
             var = tk.IntVar(value=0)
             self.category_vars[name] = var
+            cb = tk.Checkbutton(cat_frame, text=name, variable=var,
+                              font=('Microsoft YaHei UI', 9, 'bold'),
+                              bg='white', fg='#202124',
+                              selectcolor='#165DFF',
+                              activebackground='white',
+                              activeforeground='#165DFF',
+                              cursor='hand2',
+                              command=lambda c=name: self._on_category_changed(c))
+            cb.pack(side=tk.LEFT, padx=(0, 8))
 
-            btn = tk.Checkbutton(cat_btn_frame, text=name,
-                               variable=var,
-                               font=('Microsoft YaHei UI', 7),
-                               bg='#e9ecef', fg='#495057',
-                               selectcolor='#165DFF',
-                               activebackground='#d0d5dc',
-                               activeforeground='white',
-                               cursor='hand2', padx=8, pady=4,
-                               indicatoron=0,
-                               command=lambda cat=name: self._on_category_click(cat))
-            btn.grid(row=i // 4, column=i % 4, sticky='ew', padx=2, pady=2)
-            cat_btn_frame.grid_columnconfigure(i % 4, weight=1)
+        # 添加全选/取消全选按钮
+        cat_btn_frame = tk.Frame(cat_frame, bg='white')
+        cat_btn_frame.pack(side=tk.RIGHT, padx=(10, 0))
 
-            self.category_btns[name] = btn
+        tk.Button(cat_btn_frame, text="全选",
+                 font=('Microsoft YaHei UI', 8),
+                 bg='#e8eaed', fg='#202124', bd=1,
+                 cursor='arrow', relief='raised', padx=8, pady=2,
+                 command=self._select_all_categories).pack(side=tk.LEFT, padx=(0, 3))
 
-        # 数据表选择
-        table_label = tk.Label(body, text="选择数据表",
-                              font=('Microsoft YaHei UI', 8, 'bold'),
-                              bg='white', fg='#495057')
-        table_label.pack(anchor='w', pady=(2, 4))
+        tk.Button(cat_btn_frame, text="取消",
+                 font=('Microsoft YaHei UI', 8),
+                 bg='#e8eaed', fg='#202124', bd=1,
+                 cursor='arrow', relief='raised', padx=8, pady=2,
+                 command=self._deselect_all_categories).pack(side=tk.LEFT)
 
-        # 收集所有数据表
+        # ========== 数据表选择（下拉框 + 搜索过滤）==========
+        table_frame = tk.Frame(body, bg='white')
+        table_frame.pack(fill=tk.X, pady=(0, 8))
+
+        # 表头行
+        table_header = tk.Frame(table_frame, bg='white')
+        table_header.pack(fill=tk.X)
+
+        tk.Label(table_header, text="选择数据表：", font=('Microsoft YaHei UI', 9, 'bold'),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=(0, 6))
+
+        # 搜索框
+        self.table_search_var = tk.StringVar()
+        self.table_search_entry = tk.Entry(
+            table_header, textvariable=self.table_search_var,
+            font=('Microsoft YaHei UI', 9), width=12,
+            relief='solid', bd=1
+        )
+        self.table_search_entry.pack(side=tk.LEFT, padx=(0, 6))
+        self.table_search_entry.insert(0, "搜索报表...")
+        self.table_search_entry.config(foreground='gray')
+
+        # 搜索框事件
+        self.table_search_entry.bind('<FocusIn>', self._on_search_focus_in)
+        self.table_search_entry.bind('<FocusOut>', self._on_search_focus_out)
+        self.table_search_entry.bind('<KeyRelease>', self._on_table_search)
+
+        self.table_vars = {}
+        TABLE_CATEGORIES = {
+            '干扰': ['5G干扰小区', '4G干扰小区'],
+            '容量': ['5G小区容量报表', '重要场景-天'],
+            '工参': ['5G小区工参报表', '4G小区工参报表'],
+            'MR覆盖': ['5GMR覆盖-小区天', '4GMR覆盖-小区天'],
+            '语音报表': ['VoLTE小区监控预警', 'VONR小区监控预警', 'EPSFB小区监控预警'],
+            '小区性能': ['5G小区性能KPI报表', '4G小区性能KPI报表'],
+            '全程完好率': ['4G全程完好率报表', '5G全程完好率报表'],
+            '语音小区': ['4G语音小区', '5G语音小区'],
+        }
+
         all_tables = []
-        for tables in self.TABLE_CATEGORIES.values():
+        for tables in TABLE_CATEGORIES.values():
             all_tables.extend(tables)
 
-        # 创建数据表下拉选择（带搜索功能）
+        for name in all_tables:
+            self.table_vars[name] = tk.IntVar(value=0)
+
+        # 保存所有表格列表用于搜索
+        self._all_tables = all_tables
+        self._filtered_tables = all_tables.copy()
+
+        # 使用下拉框选择数据表
         self.table_dropdown = MultiSelectDropdown(
-            body,
+            table_frame,
             all_tables,
-            width=20,
-            select_all=False,
-            on_change_callback=self._on_tables_changed
+            width=22,
+            select_all=False
         )
-        self.table_dropdown.pack(fill=tk.X, pady=(0, 4))
+        self.table_dropdown.pack(pady=(2, 0))
 
         # 自定义字段选择
-        custom_row = tk.Frame(body, bg='white')
-        custom_row.pack(fill=tk.X, pady=(0, 2))
+        custom_field_frame = tk.Frame(body, bg='white')
+        custom_field_frame.pack(fill=tk.X, pady=(0, 8))
 
         self.custom_fields_var = tk.BooleanVar(value=False)
-        custom_field_cb = tk.Checkbutton(custom_row, text="自定义字段",
+        custom_field_cb = tk.Checkbutton(custom_field_frame, text="自定义字段",
                                         variable=self.custom_fields_var,
-                                        font=('Microsoft YaHei UI', 7),
-                                        bg='white', fg='#495057',
+                                        font=('Microsoft YaHei UI', 9, 'bold'),
+                                        bg='white', fg='#202124',
                                         selectcolor='#165DFF',
                                         activebackground='white',
                                         activeforeground='#165DFF',
-                                        cursor='hand2',
-                                        padx=4,
+                                        cursor='arrow',
                                         command=self._on_custom_fields_toggle)
-        custom_field_cb.pack(side=tk.LEFT, padx=(0, 4))
+        custom_field_cb.pack(side=tk.LEFT, padx=(0, 6))
 
-        self.select_fields_btn = tk.Button(custom_row, text="选择",
-                                         font=('Microsoft YaHei UI', 7),
-                                         bg='#e9ecef', fg='#495057', bd=0,
-                                         cursor='hand2', padx=6, pady=1,
+        self.select_fields_btn = tk.Button(custom_field_frame, text="选择字段",
+                                         font=('Microsoft YaHei UI', 8, 'bold'),
+                                         bg='#e8eaed', fg='#202124', bd=1,
+                                         cursor='arrow', relief='raised',
+                                         padx=10, pady=2,
                                          state=tk.DISABLED,
                                          command=self._show_field_selector)
         self.select_fields_btn.pack(side=tk.LEFT)
@@ -607,455 +408,337 @@ class NqiToolGUI:
         self.selected_fields = {}
         self.field_configs = {}
 
-    def _on_category_click(self, category):
-        var = self.category_vars[category]
-        new_value = 1 - var.get()
-        var.set(new_value)
-        btn = self.category_btns[category]
-        if new_value == 1:
-            btn.config(bg='#165DFF', fg='white')
-        else:
-            btn.config(bg='#e9ecef', fg='#495057')
-        self._sync_tables_from_categories()
-
-    def _on_tables_changed(self):
-        """数据表选择变化时的回调 - 同步更新分类按钮状态"""
-        if not hasattr(self, 'table_dropdown') or not hasattr(self, 'category_vars'):
-            return
-
-        # 防止循环调用
-        if getattr(self, '_is_syncing_tables', False):
-            return
-        self._is_syncing_tables = True
-
-        # 收集需要更新的分类
-        selected_tables = set(self.table_dropdown.get_selected())
-
-        for cat_name, cat_var in self.category_vars.items():
-            cat_tables = set(self.TABLE_CATEGORIES.get(cat_name, []))
-            has_selected = bool(selected_tables & cat_tables)
-            current_state = cat_var.get()
-
-            if has_selected and current_state == 0:
-                cat_var.set(1)
-                self.category_btns[cat_name].config(bg='#165DFF', fg='white')
-            elif not has_selected and current_state == 1:
-                cat_var.set(0)
-                self.category_btns[cat_name].config(bg='#e9ecef', fg='#495057')
-
-        self._is_syncing_tables = False
-
-    def _build_params_card_new(self, parent):
-        """构建提取参数卡片"""
-        # 动态导入 tkcalendar
-        try:
-            from tkcalendar import DateEntry
-            self._use_tkcalendar = True
-        except ImportError:
-            self._use_tkcalendar = False
-
-        card = self._build_card_shadow(parent, "提取参数", "⚙")
+    def _build_params_card(self, parent):
+        """构建提取参数卡片（紧凑布局，右侧显示）"""
+        card = self._build_card(parent, "⚙ 提取参数")
+        card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
 
         body = tk.Frame(card, bg='white')
-        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 6))
+        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
 
-        city_frame = tk.Frame(body, bg='white')
-        city_frame.pack(fill=tk.X, pady=(0, 6))
+        # 第一行：地市选择 + 快捷日期（水平排列）
+        top_row = tk.Frame(body, bg='white')
+        top_row.pack(fill=tk.X, pady=(0, 6))
 
-        tk.Label(city_frame, text="地市",
-                font=('Microsoft YaHei UI', 8, 'bold'),
-                bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=(0, 8))
+        # 地市选择
+        city_frame = tk.Frame(top_row, bg='white')
+        city_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(city_frame, text="地市选择", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
 
         self.city_dropdown = MultiSelectDropdown(
             city_frame,
             MultiSelectDropdown.GD_CITIES,
-            width=20,
+            width=12,
             select_all=False
         )
-        self.city_dropdown.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.city_dropdown.pack(pady=(2, 0))
         self.city_dropdown.set_selected(['阳江'])
 
-        quick_frame = tk.Frame(body, bg='white')
-        quick_frame.pack(fill=tk.X, pady=(0, 6))
+        # 快捷日期
+        quick_frame = tk.Frame(top_row, bg='white')
+        quick_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(quick_frame, text="快捷日期", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
 
-        tk.Label(quick_frame, text="快捷",
-                font=('Microsoft YaHei UI', 8, 'bold'),
-                bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=(0, 8))
+        quick_inner = tk.Frame(quick_frame, bg='white')
+        quick_inner.pack(pady=(2, 0))
 
         self.quick_date_btns = {}
-        for text, days in [("昨天", 1), ("7天", 7), ("30天", 30)]:
-            btn = tk.Button(quick_frame, text=text,
-                           font=('Microsoft YaHei UI', 7),
-                           bg='#e9ecef', fg='#495057', bd=0,
-                           cursor='hand2', padx=6, pady=2,
+        for text, days in [("昨天", 1), ("近7天", 7), ("近30天", 30)]:
+            btn = tk.Button(quick_inner, text=text, font=('Microsoft YaHei UI', 8, 'bold'),
+                           bg='#e8eaed', fg='#202124', bd=1, padx=10, pady=2,
+                           cursor='arrow', relief='raised',
                            command=lambda d=days: self.set_quick_date(d))
-            btn.pack(side=tk.LEFT, padx=(0, 2))
+            btn.pack(side=tk.LEFT, padx=(0, 3))
             self.quick_date_btns[days] = btn
 
-        # 第二行：日期范围
+        # 第二行：日期范围（单独一行）
         date_row = tk.Frame(body, bg='white')
         date_row.pack(fill=tk.X, pady=(0, 6))
 
-        tk.Label(date_row, text="日期",
-                font=('Microsoft YaHei UI', 8, 'bold'),
-                bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=(0, 8))
+        # 日期范围
+        date_frame = tk.Frame(date_row, bg='white')
+        date_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(date_frame, text="日期范围", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+
+        date_inner = tk.Frame(date_frame, bg='white')
+        date_inner.pack(pady=(2, 0))
+
+        self.start_year_var = tk.IntVar(value=datetime.now().year)
+        self.start_month_var = tk.IntVar(value=datetime.now().month)
+        self.start_day_var = tk.IntVar(value=1)
 
         yesterday = datetime.now() - timedelta(days=1)
-        start_date = datetime.now() - timedelta(days=7)
+        self.end_year_var = tk.IntVar(value=yesterday.year)
+        self.end_month_var = tk.IntVar(value=yesterday.month)
+        self.end_day_var = tk.IntVar(value=yesterday.day)
 
-        if self._use_tkcalendar:
-            # 使用 tkcalendar 日历选择器
-            self.start_date_entry = DateEntry(
-                date_row,
-                width=10,
-                font=('Microsoft YaHei UI', 9),
-                date_pattern='yyyy-mm-dd',
-                showweeknumbers=False
-            )
-            self.start_date_entry.pack(side=tk.LEFT, padx=(0, 4))
-            self.start_date_entry.set_date(start_date)
+        start_frame = tk.Frame(date_inner, bg='white')
+        start_frame.pack(side=tk.LEFT)
 
-            tk.Label(date_row, text="至", font=('Microsoft YaHei UI', 7),
-                    bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=(0, 4))
+        current_year = datetime.now().year
+        ttk.Combobox(start_frame, textvariable=self.start_year_var,
+                   values=list(range(2020, current_year + 1)),
+                   width=4, state="readonly").pack(side=tk.LEFT)
+        tk.Label(start_frame, text="-", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=1)
+        ttk.Combobox(start_frame, textvariable=self.start_month_var,
+                   values=list(range(1, 13)),
+                   width=2, state="readonly").pack(side=tk.LEFT)
+        tk.Label(start_frame, text="-", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=1)
+        ttk.Combobox(start_frame, textvariable=self.start_day_var,
+                   values=list(range(1, 32)),
+                   width=2, state="readonly").pack(side=tk.LEFT)
 
-            self.end_date_entry = DateEntry(
-                date_row,
-                width=10,
-                font=('Microsoft YaHei UI', 9),
-                date_pattern='yyyy-mm-dd',
-                showweeknumbers=False
-            )
-            self.end_date_entry.pack(side=tk.LEFT)
-            self.end_date_entry.set_date(yesterday)
+        # 开始日期日历按钮
+        start_cal_btn = tk.Button(start_frame, text="📅",
+                                 font=('Arial', 10), bg='white', fg='#165DFF',
+                                 bd=0, cursor='hand2', relief='flat',
+                                 command=lambda: self._show_calendar('start'))
+        start_cal_btn.pack(side=tk.LEFT, padx=(4, 0))
+        Tooltip(start_cal_btn, "点击选择开始日期")
 
-            # 绑定日期变化事件
-            self.start_date_entry.bind('<<DateEntrySelected>>', lambda e: self._on_date_changed())
-            self.end_date_entry.bind('<<DateEntrySelected>>', lambda e: self._on_date_changed())
-        else:
-            # 降级使用下拉框
-            self.start_year_var = tk.IntVar(value=start_date.year)
-            self.start_month_var = tk.IntVar(value=start_date.month)
-            self.start_day_var = tk.IntVar(value=start_date.day)
+        tk.Label(date_inner, text=" 至 ", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=3)
 
-            self.end_year_var = tk.IntVar(value=yesterday.year)
-            self.end_month_var = tk.IntVar(value=yesterday.month)
-            self.end_day_var = tk.IntVar(value=yesterday.day)
+        end_frame = tk.Frame(date_inner, bg='white')
+        end_frame.pack(side=tk.LEFT)
 
-            start_frame = tk.Frame(date_row, bg='white')
-            start_frame.pack(side=tk.LEFT)
+        ttk.Combobox(end_frame, textvariable=self.end_year_var,
+                   values=list(range(2020, current_year + 1)),
+                   width=4, state="readonly").pack(side=tk.LEFT)
+        tk.Label(end_frame, text="-", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=1)
+        ttk.Combobox(end_frame, textvariable=self.end_month_var,
+                   values=list(range(1, 13)),
+                   width=2, state="readonly").pack(side=tk.LEFT)
+        tk.Label(end_frame, text="-", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=1)
+        ttk.Combobox(end_frame, textvariable=self.end_day_var,
+                   values=list(range(1, 32)),
+                   width=2, state="readonly").pack(side=tk.LEFT)
 
-            current_year = datetime.now().year
-            ttk.Combobox(start_frame, textvariable=self.start_year_var,
-                       values=list(range(2020, current_year + 1)),
-                       width=4, state="readonly", font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT)
-            tk.Label(start_frame, text="-", font=('Microsoft YaHei UI', 7),
-                    bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=1)
-            ttk.Combobox(start_frame, textvariable=self.start_month_var,
-                       values=[f"{i:02d}" for i in range(1, 13)],
-                       width=2, state="readonly", font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT)
-            tk.Label(start_frame, text="-", font=('Microsoft YaHei UI', 7),
-                    bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=1)
-            ttk.Combobox(start_frame, textvariable=self.start_day_var,
-                       values=[f"{i:02d}" for i in range(1, 32)],
-                       width=2, state="readonly", font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT)
+        # 结束日期日历按钮
+        end_cal_btn = tk.Button(end_frame, text="📅",
+                               font=('Arial', 10), bg='white', fg='#165DFF',
+                               bd=0, cursor='hand2', relief='flat',
+                               command=lambda: self._show_calendar('end'))
+        end_cal_btn.pack(side=tk.LEFT, padx=(4, 0))
+        Tooltip(end_cal_btn, "点击选择结束日期")
 
-            tk.Label(date_row, text="至", font=('Microsoft YaHei UI', 7),
-                    bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=4)
+        # 第三行：字段获取方式
+        field_mode_row = tk.Frame(body, bg='white')
+        field_mode_row.pack(fill=tk.X, pady=(0, 6))
 
-            end_frame = tk.Frame(date_row, bg='white')
-            end_frame.pack(side=tk.LEFT)
+        field_mode_frame = tk.Frame(field_mode_row, bg='white')
+        field_mode_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(field_mode_frame, text="字段获取方式", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
 
-            ttk.Combobox(end_frame, textvariable=self.end_year_var,
-                       values=list(range(2020, current_year + 1)),
-                       width=4, state="readonly", font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT)
-            tk.Label(end_frame, text="-", font=('Microsoft YaHei UI', 7),
-                    bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=1)
-            ttk.Combobox(end_frame, textvariable=self.end_month_var,
-                       values=[f"{i:02d}" for i in range(1, 13)],
-                       width=2, state="readonly", font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT)
-            tk.Label(end_frame, text="-", font=('Microsoft YaHei UI', 7),
-                    bg='white', fg='#6c757d').pack(side=tk.LEFT, padx=1)
-            ttk.Combobox(end_frame, textvariable=self.end_day_var,
-                       values=[f"{i:02d}" for i in range(1, 32)],
-                       width=2, state="readonly", font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT)
+        field_mode_inner = tk.Frame(field_mode_frame, bg='white')
+        field_mode_inner.pack(pady=(2, 0))
 
-        # 第三行：多日模式
+        self.field_mode_var = tk.StringVar(value='hardcode')
+        hardcode_rb = tk.Radiobutton(field_mode_inner, text="硬编码",
+                                     variable=self.field_mode_var, value='hardcode',
+                                     font=('Microsoft YaHei UI', 8, 'bold'),
+                                     bg='white', fg='#202124',
+                                     activebackground='white',
+                                     cursor='hand2',
+                                     command=self._on_field_mode_changed)
+        hardcode_rb.pack(side=tk.LEFT, padx=(0, 10))
+
+        dynamic_rb = tk.Radiobutton(field_mode_inner, text="动态获取",
+                                   variable=self.field_mode_var, value='dynamic',
+                                   font=('Microsoft YaHei UI', 8, 'bold'),
+                                   bg='white', fg='#202124',
+                                   activebackground='white',
+                                   cursor='hand2',
+                                   command=self._on_field_mode_changed)
+        dynamic_rb.pack(side=tk.LEFT)
+
+        # 第三行：多日模式选项（在日期范围下方，按钮上方）
         mode_row = tk.Frame(body, bg='white')
         mode_row.pack(fill=tk.X, pady=(0, 6))
 
+        mode_frame = tk.Frame(mode_row, bg='white')
+        mode_frame.pack(side=tk.LEFT, padx=(0, 0))
+
         self.multi_day_var = tk.BooleanVar(value=False)
-        multi_day_cb = tk.Checkbutton(mode_row, text="多日模式",
+        multi_day_cb = tk.Checkbutton(mode_frame, text="按日查询",
                                       variable=self.multi_day_var,
-                                      font=('Microsoft YaHei UI', 7),
-                                      bg='white', fg='#495057',
-                                      selectcolor='#e9ecef',
+                                      font=('Microsoft YaHei UI', 8),
+                                      bg='white', fg='#202124',
+                                      selectcolor='#e8f0fe',
                                       activebackground='white',
-                                      padx=4,
                                       command=self._on_multi_day_toggle)
         multi_day_cb.pack(side=tk.LEFT)
 
         self.multi_day_per_sheet_var = tk.BooleanVar(value=False)
-        self.multi_day_per_sheet_cb = tk.Checkbutton(mode_row, text="按日分Sheet",
+        multi_day_per_sheet_cb = tk.Checkbutton(mode_frame, text="按日分Sheet",
                                                variable=self.multi_day_per_sheet_var,
-                                               font=('Microsoft YaHei UI', 7),
-                                               bg='white', fg='#495057',
-                                               selectcolor='#e9ecef',
+                                               font=('Microsoft YaHei UI', 8),
+                                               bg='white', fg='#202124',
+                                               selectcolor='#e8f0fe',
                                                activebackground='white',
                                                state=tk.DISABLED,
-                                               padx=4,
                                                command=self._on_multi_day_per_sheet_toggle)
-        self.multi_day_per_sheet_cb.pack(side=tk.LEFT)
+        self.multi_day_per_sheet_cb = multi_day_per_sheet_cb
+        multi_day_per_sheet_cb.pack(side=tk.LEFT, padx=(6, 0))
 
         # 第四行：操作按钮
         btn_row = tk.Frame(body, bg='white')
-        btn_row.pack(fill=tk.X)
+        btn_row.pack(fill=tk.X, pady=(4, 0))
 
         self.extract_btn = tk.Button(btn_row, text="▶ 开始提取",
-                               font=('Microsoft YaHei UI', 9, 'bold'),
-                               bg='#165DFF', fg='white', bd=0,
-                               cursor='hand2', padx=16, pady=5,
+                               font=('Microsoft YaHei UI', 10, 'bold'),
+                               bg='#165DFF', fg='white', bd=1,
+                               cursor='arrow', relief='raised', padx=22, pady=5,
                                state=tk.DISABLED, command=self._on_query)
         self.extract_btn.pack(side=tk.LEFT)
 
-        self.stop_btn = tk.Button(btn_row, text="⏹",
-                            font=('Microsoft YaHei UI', 8),
-                            bg='#dc3545', fg='white', bd=0,
-                            cursor='hand2', padx=10, pady=5,
+        self.stop_btn = tk.Button(btn_row, text="⏹ 停止",
+                            font=('Microsoft YaHei UI', 9),
+                            bg='#dc3545', fg='white', bd=1,
+                            cursor='arrow', relief='raised', padx=14, pady=5,
                             state=tk.DISABLED, command=self._on_stop)
-        self.stop_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self.stop_btn.pack(side=tk.LEFT, padx=(8, 0))
 
-        tk.Button(btn_row, text="📁",
-                 font=('Microsoft YaHei UI', 8),
-                 bg='#e9ecef', fg='#495057', bd=0,
-                 cursor='hand2', padx=8, pady=5,
-                 command=self.open_output_dir).pack(side=tk.LEFT, padx=(6, 0))
+        tk.Button(btn_row, text="📁 打开目录",
+                 font=('Microsoft YaHei UI', 9),
+                 bg='#f0f2f5', fg='#202124', bd=1,
+                 cursor='arrow', relief='raised', padx=12, pady=5,
+                 command=self.open_output_dir).pack(side=tk.RIGHT)
 
-    def _on_date_changed(self):
-        """日期变化事件"""
-        pass
+    def _build_bottom_section(self, parent):
+        """构建底部日志区域"""
+        # 直接使用 Frame 作为容器，填满所有剩余空间
+        bottom = tk.Frame(parent, bg='white')
+        bottom.pack(fill=tk.BOTH, expand=True, pady=(0, 0))
 
-    def _build_preview_card(self, parent):
-        card = self._build_card_shadow(parent, "数据预览", "📋")
+        progress_area = tk.Frame(bottom, bg='white')
+        progress_area.pack(fill=tk.X, padx=16, pady=(10, 6))
 
-        body = tk.Frame(card, bg='white')
-        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+        progress_info = tk.Frame(progress_area, bg='white')
+        progress_info.pack(fill=tk.X)
 
-        self.preview_stats = tk.Frame(body, bg='white')
-        self.preview_stats.pack(fill=tk.X)
-        self.preview_stats_label = tk.Label(self.preview_stats, text="",
-                                           font=('Microsoft YaHei UI', 8),
-                                           bg='white', fg='#6c757d')
-        self.preview_stats_label.pack(side=tk.LEFT)
-        self.preview_stats.pack_forget()
-
-        guide_frame = tk.Frame(body, bg='white')
-        guide_frame.pack(fill=tk.BOTH, expand=True, pady=20)
-
-        steps = [
-            ("1", "登录账号", "输入用户名密码并点击登录"),
-            ("2", "选择数据表", "选择需要查询的数据分类和表"),
-            ("3", "设置参数", "选择地市和日期范围"),
-            ("4", "开始提取", "点击开始提取按钮获取数据"),
-        ]
-        for i, (num, title, desc) in enumerate(steps):
-            step_frame = tk.Frame(guide_frame, bg='white')
-            step_frame.pack(fill=tk.X, pady=4, padx=20)
-
-            num_label = tk.Label(step_frame, text=num,
-                               font=('Microsoft YaHei UI', 10, 'bold'),
-                               bg='#165DFF', fg='white',
-                               width=2, height=1)
-            num_label.pack(side=tk.LEFT, padx=(0, 10))
-
-            text_frame = tk.Frame(step_frame, bg='white')
-            text_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            tk.Label(text_frame, text=title,
-                    font=('Microsoft YaHei UI', 9, 'bold'),
-                    bg='white', fg='#1a1a2e').pack(anchor='w')
-            tk.Label(text_frame, text=desc,
-                    font=('Microsoft YaHei UI', 7),
-                    bg='white', fg='#adb5bd').pack(anchor='w')
-
-        self.preview_guide = guide_frame
-
-        columns = ('文件名', '记录数', '状态')
-        self.preview_tree = ttk.Treeview(body, columns=columns, show='headings', height=6)
-        self.preview_tree.heading('文件名', text='文件名')
-        self.preview_tree.heading('记录数', text='记录数')
-        self.preview_tree.heading('状态', text='状态')
-        self.preview_tree.column('文件名', width=200)
-        self.preview_tree.column('记录数', width=80)
-        self.preview_tree.column('状态', width=80)
-        self.preview_tree.pack_forget()
-
-    def _build_log_card(self, parent):
-        card = self._build_card_shadow(parent, "运行日志", "📝")
-
-        body = tk.Frame(card, bg='white')
-        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
-
-        toolbar = tk.Frame(body, bg='white')
-        toolbar.pack(fill=tk.X, pady=(0, 4))
-
-        search_frame = tk.Frame(toolbar, bg='#f8f9fa', bd=1, relief='solid')
-        search_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
-        self.log_search_var = tk.StringVar()
-        self.log_search_entry = tk.Entry(search_frame, textvariable=self.log_search_var,
-                                        font=('Microsoft YaHei UI', 7),
-                                        relief='flat', bg='#f8f9fa', bd=0, width=12)
-        self.log_search_entry.pack(side=tk.LEFT, padx=4, pady=2)
-        self.log_search_entry.insert(0, "搜索日志...")
-        self.log_search_entry.bind('<FocusIn>', lambda e: self._on_log_search_focus_in())
-        self.log_search_entry.bind('<FocusOut>', lambda e: self._on_log_search_focus_out())
-        self.log_search_entry.bind('<KeyRelease>', lambda e: self._on_log_search())
-
-        tk.Button(search_frame, text="✕",
-                 font=('Microsoft YaHei UI', 7),
-                 bg='#f8f9fa', fg='#6c757d', bd=0,
-                 cursor='hand2', padx=4,
-                 command=self._clear_log_search).pack(side=tk.RIGHT, padx=2)
-
-        self._log_auto_scroll = True
-        self.auto_scroll_label = tk.Label(toolbar, text="", font=('Microsoft YaHei UI', 7),
-                                         bg='white', fg='#fd7e14')
-        self.auto_scroll_label.pack(side=tk.LEFT, padx=(0, 4))
-
-        tk.Button(toolbar, text="清空",
-                 font=('Microsoft YaHei UI', 7),
-                 bg='#e9ecef', fg='#495057', bd=0,
-                 cursor='hand2', padx=6, pady=1,
-                 command=self._clear_log).pack(side=tk.RIGHT)
-
-        self.log_text = scrolledtext.ScrolledText(body,
-                                                   font=('Consolas', 8),
-                                                   state='disabled',
-                                                   bg='#f8f9fa',
-                                                   relief='flat',
-                                                   bd=0)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-
-        self.log_text.tag_configure('INFO', foreground='#212529')
-        self.log_text.tag_configure('ERROR', foreground='#dc3545')
-        self.log_text.tag_configure('WARNING', foreground='#fd7e14')
-        self.log_text.tag_configure('SUCCESS', foreground='#22c55e')
-        self.log_text.tag_configure('search_highlight', background='#fff3cd', foreground='#856404')
-        self.log_text.tag_configure('dim', foreground='#ced4da')
-
-        self.log_text.bind('<MouseWheel>', self._on_log_scroll)
-        self.log_text.bind('<Button-4>', self._on_log_scroll)
-        self.log_text.bind('<Button-5>', self._on_log_scroll)
-
-        handler = LogTextHandler(self.log_text)
-        handler.setLevel(logging.INFO)
-        self.logger.addHandler(handler)
-
-    def _on_log_search_focus_in(self):
-        if self.log_search_entry.get() == "搜索日志...":
-            self.log_search_entry.delete(0, tk.END)
-            self.log_search_entry.config(fg='#212529')
-
-    def _on_log_search_focus_out(self):
-        if not self.log_search_entry.get():
-            self.log_search_entry.insert(0, "搜索日志...")
-            self.log_search_entry.config(fg='#adb5bd')
-
-    def _clear_log_search(self):
-        self.log_search_var.set("")
-        self.log_text.tag_remove('search_highlight', '1.0', tk.END)
-        self.log_text.tag_remove('dim', '1.0', tk.END)
-
-    def _on_log_search(self):
-        keyword = self.log_search_var.get().strip()
-        self.log_text.tag_remove('search_highlight', '1.0', tk.END)
-        self.log_text.tag_remove('dim', '1.0', tk.END)
-        if not keyword or keyword == "搜索日志...":
-            return
-        start = '1.0'
-        while True:
-            pos = self.log_text.search(keyword, start, stopindex=tk.END, nocase=True)
-            if not pos:
-                break
-            end = f"{pos}+{len(keyword)}c"
-            self.log_text.tag_add('search_highlight', pos, end)
-            start = end
-
-    def _clear_log(self):
-        self.log_text.config(state='normal')
-        self.log_text.delete('1.0', tk.END)
-        self.log_text.config(state='disabled')
-
-    def _on_log_scroll(self, event=None):
-        if not self._log_auto_scroll:
-            return
-        self._log_auto_scroll = False
-        self.auto_scroll_label.config(text="自动滚动已暂停")
-        self.log_text.bind('<Double-Button-1>', lambda e: self._resume_auto_scroll())
-
-    def _resume_auto_scroll(self):
-        self._log_auto_scroll = True
-        self.auto_scroll_label.config(text="")
-        self.log_text.unbind('<Double-Button-1>')
-        self.log_text.see(tk.END)
-
-    def _build_progress_section(self):
-        """构建底部进度条区域"""
-        # 进度条容器（占满宽度）
-        progress_container = tk.Frame(self.content_pages, bg='white', height=50)
-        progress_container.pack(fill=tk.X, pady=(12, 0))
-        progress_container.pack_propagate(False)
-
-        progress_inner = tk.Frame(progress_container, bg='white')
-        progress_inner.pack(fill=tk.BOTH, padx=16, pady=8)
-
-        progress_top = tk.Frame(progress_inner, bg='white')
-        progress_top.pack(fill=tk.X)
-
-        self.progress_lbl_pct = tk.Label(progress_top, text="进度: 0%",
-                          font=('Microsoft YaHei UI', 9, 'bold'),
+        self.progress_lbl_pct = tk.Label(progress_info, text="进度: 0%",
+                          font=('Microsoft YaHei UI', 10, 'bold'),
                           bg='white', fg='#165DFF')
         self.progress_lbl_pct.pack(side=tk.LEFT)
 
-        self.progress_lbl_detail = tk.Label(progress_top, text="就绪",
+        self.progress_lbl_detail = tk.Label(progress_info, text="就绪",
                              font=('Microsoft YaHei UI', 9),
-                             bg='white', fg='#6c757d')
+                             bg='white', fg='#5f6368')
         self.progress_lbl_detail.pack(side=tk.RIGHT)
 
+        # 预估剩余时间标签
+        self.progress_lbl_eta = tk.Label(progress_info, text="",
+                             font=('Microsoft YaHei UI', 9),
+                             bg='white', fg='#6b7280')
+        self.progress_lbl_eta.pack(side=tk.RIGHT, padx=(0, 10))
+
         # 圆角进度条
-        self.progress_canvas = tk.Canvas(progress_inner, height=6, bg='white', highlightthickness=0)
+        self.progress_canvas = tk.Canvas(progress_area, height=8, bg='white', highlightthickness=0)
         self.progress_canvas.pack(fill=tk.X, pady=(6, 0))
-        self.progress_bar = self.progress_canvas.create_rectangle(0, 0, 0, 6, fill='#165DFF', outline='')
-        self.progress_bg = self.progress_canvas.create_rectangle(0, 0, 1000, 6, fill='#e9ecef', outline='')
+        self.progress_bar = self.progress_canvas.create_rectangle(0, 0, 0, 8, fill='#165DFF', outline='')
+        self.progress_bg = self.progress_canvas.create_rectangle(0, 0, 1000, 8, fill='#f0f2f5', outline='')
+        self.progress_canvas_width = 0  # 动态获取
+
+        # 日志输出
+        log_area = tk.Frame(bottom, bg='white')
+        log_area.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
+
+        self.log_text = scrolledtext.ScrolledText(log_area, height=15,
+                                                   font=('Consolas', 9),
+                                                   state='disabled',
+                                                   bg='#f8f9fa',
+                                                   relief='flat',
+                                                   bd=1)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+
+        # 添加日志处理器
+        handler = LogTextHandler(self.log_text)
+        handler.setLevel(logging.INFO)
+        self.logger.addHandler(handler)
 
     def _update_license_display(self):
         """更新授权时间显示"""
         if self.expiry_time:
             try:
+                # 解析过期时间
                 display_time = self.expiry_time.strftime("%Y-%m-%d")
+                
+                # 计算剩余天数
                 current_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 days_left = (self.expiry_time - current_dt).days
-
+                
                 if days_left < 0:
-                    self.license_label.config(text="授权已过期", fg='#dc3545')
-                    self.sidebar_status.config(fg='#dc3545', text="○")
+                    self.license_label.config(text="授权已过期", fg='#fce8e6')
                 elif days_left <= 7:
-                    self.license_label.config(text=f"到期: {display_time} (剩{days_left}天)", fg='#fd7e14')
-                    self.sidebar_status.config(fg='#fd7e14', text="●")
+                    self.license_label.config(text=f"授权到期: {display_time} (剩{days_left}天)", fg='#fce8e6')
                 elif days_left <= 30:
-                    self.license_label.config(text=f"到期: {display_time} (剩{days_left}天)", fg='#fd7e14')
-                    self.sidebar_status.config(fg='#fd7e14', text="●")
+                    self.license_label.config(text=f"授权到期: {display_time} (剩{days_left}天)", fg='#fff3e0')
                 else:
-                    self.license_label.config(text=f"到期: {display_time}", fg='#22c55e')
-                    self.sidebar_status.config(fg='#22c55e', text="●")
-            except:
-                self.license_label.config(text="", fg='#6c757d')
+                    self.license_label.config(text=f"授权到期: {display_time}", fg='#e8f5e9')
+            except Exception:
+                self.license_label.config(text="", fg='#e8f5e9')
 
     def _bind_events(self):
-        """绑定事件"""
-        pass
+        """绑定事件和快捷键"""
+        # 绑定快捷键
+        self.root.bind('<Control-l>', lambda e: self._on_login())
+        self.root.bind('<Control-L>', lambda e: self._on_login())
+        self.root.bind('<Control-s>', lambda e: self._on_start_export())
+        self.root.bind('<Control-S>', lambda e: self._on_start_export())
+        self.root.bind('<Escape>', lambda e: self._on_cancel_query() if self.is_querying else None)
+
+        # F1 帮助
+        self.root.bind('<F1>', lambda e: self._show_help())
+
+        # 窗口关闭事件
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    def _show_help(self):
+        """显示帮助信息"""
+        help_text = """
+NQI工具 - 快捷键帮助
+═══════════════════════════════
+
+Ctrl+L    - 执行登录
+Ctrl+S    - 开始导出
+Escape    - 取消当前查询
+F1        - 显示此帮助
+
+状态说明:
+  ● 绿色  - 登录成功
+  ● 黄色  - 登录中
+  ● 红色  - 登录失败
+
+提示: 点击日期框旁边的日历图标可快速选择日期
+        """
+        from tkinter import messagebox
+        messagebox.showinfo("快捷键帮助", help_text.strip())
+
+    def _on_start_export(self):
+        """开始导出（快捷键触发）"""
+        # 触发导出按钮
+        self._on_export()
+
+    def _on_cancel_query(self):
+        """取消查询（快捷键触发）"""
+        if self.is_querying and hasattr(self, 'jxcx') and self.jxcx:
+            self.jxcx.cancel_query()
+            self.log("已发送取消请求...", "WARNING")
 
     def _on_time_rollback(self):
-        """检测到时间回拨时的处理"""
+        """检测到时间回拨时的处理 - 后台静默执行"""
+        # 写入过期的license
         invalidate_license()
+        # 强制退出程序
         self.root.after(0, self._force_exit)
 
     def _force_exit(self):
@@ -1063,25 +746,77 @@ class NqiToolGUI:
         import os
         os._exit(1)
 
-    def _sync_tables_from_categories(self):
-        """根据选中的分类同步数据表选择"""
-        # 根据选中的分类收集所有需要选中的数据表
-        tables_to_select = []
+    def _update_login_failed_ui(self):
+        """批量更新登录失败UI"""
+        self.status_text.config(text="登录失败")
+        self.status_dot.config(fg='#ef4444')
+        self.login_status_icon.config(text="○", fg='#ef4444')
+        self.login_status_lbl.config(text="登录失败", fg='#ef4444')
 
-        for cat_name, var in self.category_vars.items():
-            if var.get() == 1:  # 该分类被选中
-                if cat_name in self.TABLE_CATEGORIES:
-                    tables_to_select.extend(self.TABLE_CATEGORIES[cat_name])
+    def _update_login_error_ui(self, message):
+        """批量更新登录异常UI"""
+        self.status_text.config(text="登录异常")
+        self.status_dot.config(fg='#ef4444')
+        self.login_status_icon.config(text="○", fg='#ef4444')
+        self.login_status_lbl.config(text="登录异常", fg='#ef4444')
+        self.log(f"登录异常: {message}", "ERROR")
 
-        # 更新数据表下拉选择（不触发回调，避免循环）
-        if tables_to_select:
-            self.table_dropdown.set_selected(tables_to_select, trigger_callback=False)
+    def _on_category_changed(self, category):
+        """数据分类选择事件"""
+        self.log(f"选择了数据分类: {category}", "INFO")
+
+    def _select_all_categories(self):
+        """全选所有数据分类"""
+        for var in self.category_vars.values():
+            var.set(1)
+        self.log("已全选所有数据分类", "INFO")
+
+    def _deselect_all_categories(self):
+        """取消全选所有数据分类"""
+        for var in self.category_vars.values():
+            var.set(0)
+        self.log("已取消全选", "INFO")
+
+    def _on_search_focus_in(self, event):
+        """搜索框获取焦点"""
+        if self.table_search_entry.get() == "搜索报表...":
+            self.table_search_entry.delete(0, tk.END)
+            self.table_search_entry.config(foreground='black')
+
+    def _on_search_focus_out(self, event):
+        """搜索框失去焦点"""
+        if not self.table_search_entry.get():
+            self.table_search_entry.insert(0, "搜索报表...")
+            self.table_search_entry.config(foreground='gray')
+            # 恢复所有表格
+            self.table_dropdown = MultiSelectDropdown(
+                None,
+                self._all_tables,
+                width=22,
+                select_all=False
+            )
+
+    def _on_table_search(self, event):
+        """搜索过滤表格"""
+        search_text = self.table_search_var.get().lower()
+        if search_text == "搜索报表...":
+            return
+
+        if not search_text:
+            # 恢复所有表格
+            self._filtered_tables = self._all_tables.copy()
         else:
-            # 如果没有选中任何分类，清空数据表选择
-            self.table_dropdown.set_selected([], trigger_callback=False)
+            # 过滤表格
+            self._filtered_tables = [t for t in self._all_tables if search_text in t.lower()]
+
+        # 重建下拉框
+        # 注意：这里需要重建下拉框内容，但由于 MultiSelectDropdown 的限制
+        # 我们暂时在日志中提示搜索结果
+        if search_text:
+            self.log(f"搜索 '{search_text}': 找到 {len(self._filtered_tables)} 个匹配报表", "INFO")
 
     def _on_multi_day_toggle(self):
-        """多日模式切换事件"""
+        """按日查询切换事件"""
         if self.multi_day_var.get():
             self.multi_day_per_sheet_cb.config(state=tk.NORMAL)
         else:
@@ -1099,8 +834,15 @@ class NqiToolGUI:
         else:
             self.select_fields_btn.config(state=tk.DISABLED)
 
+    def _on_field_mode_changed(self):
+        """字段获取方式切换事件"""
+        mode = self.field_mode_var.get()
+        mode_text = "硬编码" if mode == 'hardcode' else "动态获取"
+        self.log(f"切换字段获取方式: {mode_text}", "INFO")
+
     def _show_field_selector(self):
         """显示字段选择窗口"""
+        # 检查登录状态
         if not self.jxcx:
             messagebox.showwarning("警告", "请先登录后再选择字段")
             return
@@ -1110,33 +852,41 @@ class NqiToolGUI:
             messagebox.showwarning("警告", "请先选择数据表")
             return
 
+        # 创建字段选择窗口
         field_window = tk.Toplevel(self.root)
         field_window.title("选择导出字段")
         field_window.geometry("600x400")
         field_window.resizable(True, True)
 
+        # 设置窗口在主窗口中间
         self.root.update_idletasks()
         x = (self.root.winfo_width() - 600) // 2 + self.root.winfo_x()
         y = (self.root.winfo_height() - 400) // 2 + self.root.winfo_y()
         field_window.geometry(f"600x400+{x}+{y}")
 
+        # 创建滚动区域
         canvas = tk.Canvas(field_window)
         scrollbar = ttk.Scrollbar(field_window, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
 
         scrollable_frame.bind(
             "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
         )
 
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
+        # 布局
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        # 字段选择区域
         field_vars = {}
         for table_name in selected_tables:
+            # 动态获取字段配置
             if table_name not in self.field_configs and self.jxcx:
                 table_config = TableConfig.get_table_config(table_name)
                 if table_config:
@@ -1151,24 +901,28 @@ class NqiToolGUI:
                             self.field_configs[table_name] = configs
                             self.log(f"获取到 {table_name} 的 {len(configs)} 个字段", "SUCCESS")
                         else:
-                            self.log(f"获取 {table_name} 的字段配置失败", "WARNING")
+                            self.log(f"获取 {table_name} 的字段配置失败，可能该报表不支持自定义字段", "WARNING")
                     except Exception as e:
                         self.log(f"获取字段配置异常: {e}", "ERROR")
 
+            # 显示字段选择
             if table_name in self.field_configs:
                 configs = self.field_configs[table_name]
-
+                
+                # 表格标题
                 table_frame = tk.Frame(scrollable_frame, bg='white', bd=1, relief='solid')
                 table_frame.pack(fill=tk.X, pady=5, padx=10)
-
-                table_title = tk.Label(table_frame, text=table_name,
+                
+                table_title = tk.Label(table_frame, text=table_name, 
                                      font=('Microsoft YaHei UI', 10, 'bold'),
                                      bg='white', fg='#165DFF')
                 table_title.pack(anchor='w', padx=5, pady=3)
 
+                # 字段选择
                 fields_frame = tk.Frame(scrollable_frame, bg='white')
                 fields_frame.pack(fill=tk.X, pady=(0, 10), padx=10)
 
+                # 按行排列，每行4个复选框
                 row_frame = None
                 for i, config in enumerate(configs):
                     if i % 4 == 0:
@@ -1177,31 +931,34 @@ class NqiToolGUI:
 
                     field_name = config.get('columnname_cn', config.get('columnname', ''))
                     field_key = config.get('columnname', '')
-
-                    var = tk.BooleanVar(value=True)
+                    
+                    var = tk.BooleanVar(value=True)  # 默认全选
                     field_vars[(table_name, field_key)] = var
 
                     cb = tk.Checkbutton(row_frame, text=field_name,
                                        variable=var,
                                        font=('Microsoft YaHei UI', 9),
-                                       bg='white', fg='#495057',
+                                       bg='white', fg='#202124',
                                        selectcolor='#165DFF',
                                        activebackground='white',
                                        activeforeground='#165DFF',
-                                       cursor='hand2')
+                                       cursor='arrow')
                     cb.pack(side=tk.LEFT, padx=10, pady=1, fill=tk.X, expand=True)
 
+        # 按钮区域
         btn_frame = tk.Frame(field_window, bg='white')
         btn_frame.pack(fill=tk.X, pady=10, padx=10)
 
         def on_ok():
+            # 保存选中的字段
             self.selected_fields = {}
             for (table_name, field_key), var in field_vars.items():
                 if var.get():
                     if table_name not in self.selected_fields:
                         self.selected_fields[table_name] = []
                     self.selected_fields[table_name].append(field_key)
-
+            
+            # 显示选中的字段数量
             total_fields = sum(len(fields) for fields in self.selected_fields.values())
             self.log(f"已选择 {total_fields} 个字段", "INFO")
             field_window.destroy()
@@ -1217,21 +974,155 @@ class NqiToolGUI:
         end_date = datetime.now() - timedelta(days=1)
         start_date = end_date - timedelta(days=days-1)
 
-        if self._use_tkcalendar and hasattr(self, 'start_date_entry'):
-            # 使用 tkcalendar
-            self.start_date_entry.set_date(start_date)
-            self.end_date_entry.set_date(end_date)
-        else:
-            # 使用下拉框
-            self.start_year_var.set(start_date.year)
-            self.start_month_var.set(start_date.month)
-            self.start_day_var.set(start_date.day)
+        self.start_year_var.set(start_date.year)
+        self.start_month_var.set(start_date.month)
+        self.start_day_var.set(start_date.day)
 
-            self.end_year_var.set(end_date.year)
-            self.end_month_var.set(end_date.month)
-            self.end_day_var.set(end_date.day)
+        self.end_year_var.set(end_date.year)
+        self.end_month_var.set(end_date.month)
+        self.end_day_var.set(end_date.day)
 
         self.log(f"设置快捷日期: 近{days}天", "INFO")
+
+    def _show_calendar(self, date_type):
+        """显示日历选择对话框
+
+        Args:
+            date_type: 'start' 或 'end'，表示开始或结束日期
+        """
+        # 获取当前选中的日期
+        if date_type == 'start':
+            year = self.start_year_var.get()
+            month = self.start_month_var.get()
+            day = self.start_day_var.get()
+            initial_date = f"{year:04d}-{month:02d}-{day:02d}"
+        else:
+            year = self.end_year_var.get()
+            month = self.end_month_var.get()
+            day = self.end_day_var.get()
+            initial_date = f"{year:04d}-{month:02d}-{day:02d}"
+
+        # 显示日历对话框
+        dialog = CalendarDialog(self.root, initial_date=initial_date)
+        selected_date = dialog.show()
+
+        if selected_date:
+            # 解析日期
+            parts = selected_date.split('-')
+            year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+
+            # 更新变量
+            if date_type == 'start':
+                self.start_year_var.set(year)
+                self.start_month_var.set(month)
+                self.start_day_var.set(day)
+                self.log(f"选择开始日期: {selected_date}", "INFO")
+            else:
+                self.end_year_var.set(year)
+                self.end_month_var.set(month)
+                self.end_day_var.set(day)
+                self.log(f"选择结束日期: {selected_date}", "INFO")
+
+    def update_progress(self, current, total, detail=""):
+        """更新进度条显示
+
+        Args:
+            current: 当前进度（0-100）
+            total: 总数（用于计算百分比）
+            detail: 详细描述文字
+        """
+        if total > 0:
+            pct = int(current / total * 100)
+        else:
+            pct = 0
+
+        # 计算预估剩余时间
+        eta_text = self._calculate_eta(current, total, pct)
+        self.root.after(0, lambda: self._update_progress_ui(pct, detail, eta_text))
+
+    def _calculate_eta(self, current, total, pct):
+        """计算预估剩余时间
+
+        Returns:
+            str: 预估剩余时间文本
+        """
+        from datetime import datetime
+
+        if pct <= 0:
+            self._progress_start_time = datetime.now()
+            self._progress_last_update = datetime.now()
+            self._progress_last_value = 0
+            self._total_expected = total
+            return ""
+
+        now = datetime.now()
+
+        if self._progress_start_time is None:
+            self._progress_start_time = now
+            self._progress_last_update = now
+            self._progress_last_value = 0
+            return ""
+
+        # 计算进度变化率
+        elapsed = (now - self._progress_start_time).total_seconds()
+        progress_delta = pct - self._progress_last_value
+
+        if progress_delta > 0 and elapsed > 5:
+            # 估算剩余时间
+            remaining_pct = 100 - pct
+            eta_seconds = (remaining_pct / progress_delta) * elapsed
+            self._progress_last_update = now
+            self._progress_last_value = pct
+
+            # 格式化时间
+            if eta_seconds < 60:
+                eta_text = f"剩余约 {int(eta_seconds)} 秒"
+            elif eta_seconds < 3600:
+                minutes = int(eta_seconds / 60)
+                seconds = int(eta_seconds % 60)
+                eta_text = f"剩余约 {minutes}分{seconds}秒"
+            else:
+                hours = int(eta_seconds / 3600)
+                minutes = int((eta_seconds % 3600) / 60)
+                eta_text = f"剩余约 {hours}小时{minutes}分"
+
+            return eta_text
+
+        self._progress_last_update = now
+        self._progress_last_value = pct
+        return ""
+
+    def _update_progress_ui(self, pct, detail="", eta_text=""):
+        """在主线程中更新进度条UI"""
+        self.progress_lbl_pct.config(text=f"进度: {pct}%")
+        if detail:
+            self.progress_lbl_detail.config(text=detail)
+        if eta_text:
+            self.progress_lbl_eta.config(text=eta_text)
+
+        self.progress_canvas.update_idletasks()
+        canvas_width = self.progress_canvas.winfo_width()
+        if canvas_width <= 1:
+            canvas_width = 1000
+
+        bar_width = int(canvas_width * pct / 100)
+        self.progress_canvas.coords(self.progress_bar, 0, 0, bar_width, 8)
+
+    def reset_progress(self):
+        """重置进度条"""
+        self.root.after(0, lambda: self._reset_progress_ui())
+
+    def _reset_progress_ui(self):
+        """在主线程中重置进度条UI"""
+        self.progress_lbl_pct.config(text="进度: 0%")
+        self.progress_lbl_detail.config(text="就绪")
+        self.progress_lbl_eta.config(text="")
+        self.progress_canvas.coords(self.progress_bar, 0, 0, 0, 8)
+        # 重置预估时间相关变量
+        self._progress_start_time = None
+        self._progress_last_update = None
+        self._progress_last_value = 0
+        self._total_expected = 0
 
     def open_output_dir(self):
         """打开输出目录"""
@@ -1243,8 +1134,8 @@ class NqiToolGUI:
     def _on_login(self):
         """登录按钮点击事件"""
         self.log("开始登录...", "INFO")
-        self.login_dot.config(text="◐", fg='#fd7e14')
-        self.login_status_lbl.config(text="登录中...", fg='#fd7e14')
+        self.status_text.config(text="登录中...")
+        self.status_dot.config(fg='#fbbf24')  # 黄色
         thread = threading.Thread(target=self._login_worker)
         thread.daemon = True
         thread.start()
@@ -1270,19 +1161,10 @@ class NqiToolGUI:
         self.log("登录成功！", "SUCCESS")
         self.extract_btn.config(state=tk.NORMAL)
         self.login_btn.config(state=tk.DISABLED, text="已登录")
-        self.login_dot.config(text="●", fg='#22c55e')
+        self.status_text.config(text="已登录")
+        self.status_dot.config(fg='#22c55e')  # 绿色
+        self.login_status_icon.config(text="●", fg='#22c55e')
         self.login_status_lbl.config(text="已登录", fg='#22c55e')
-
-    def _update_login_failed_ui(self):
-        """批量更新登录失败UI"""
-        self.login_dot.config(text="○", fg='#dc3545')
-        self.login_status_lbl.config(text="登录失败", fg='#dc3545')
-
-    def _update_login_error_ui(self, message):
-        """批量更新登录异常UI"""
-        self.login_dot.config(text="○", fg='#dc3545')
-        self.login_status_lbl.config(text="登录异常", fg='#dc3545')
-        self.log(f"登录异常: {message}", "ERROR")
 
     def _on_query(self):
         """查询按钮点击事件"""
@@ -1295,22 +1177,23 @@ class NqiToolGUI:
             messagebox.showwarning("警告", "请选择要查询的数据表")
             return
 
-        # 兼容日历选择器和下拉框
-        if self._use_tkcalendar and hasattr(self, 'start_date_entry'):
-            start_date = self.start_date_entry.get_date().strftime('%Y-%m-%d')
-            end_date = self.end_date_entry.get_date().strftime('%Y-%m-%d')
-        else:
-            start_date = f"{self.start_year_var.get()}-{self.start_month_var.get():02d}-{self.start_day_var.get():02d}"
-            end_date = f"{self.end_year_var.get()}-{self.end_month_var.get():02d}-{self.end_day_var.get():02d}"
-
+        # 获取日期范围
+        start_date = f"{self.start_year_var.get()}-{self.start_month_var.get():02d}-{self.start_day_var.get():02d}"
+        end_date = f"{self.end_year_var.get()}-{self.end_month_var.get():02d}-{self.end_day_var.get():02d}"
+        
+        # 获取选中的地市
         selected_cities = self.city_dropdown.get_selected()
         city = ",".join(selected_cities) if selected_cities else ""
 
-        self._save_user_config()
         self.is_querying = True
-        self._stop_requested = False
         self.extract_btn.config(state=tk.DISABLED, text="查询中...")
         self.stop_btn.config(state=tk.NORMAL)
+        self.status_text.config(text="查询中...")
+        self.status_dot.config(fg='#fbbf24')  # 黄色
+
+        # 重置进度条
+        self.reset_progress()
+        self.update_progress(0, len(selected_tables), "开始查询...")
 
         self.log(f"开始查询: {', '.join(selected_tables)}", "INFO")
         self.log(f"日期范围: {start_date} 至 {end_date}", "INFO")
@@ -1323,188 +1206,1152 @@ class NqiToolGUI:
         self.query_thread.start()
 
     def _on_stop(self):
-        if not self.is_querying:
-            return
-        if messagebox.askyesno("确认", "确定要停止当前查询吗？\n已获取的数据将被保留。"):
-            self._stop_requested = True
-            self.log("正在停止查询...", "WARNING")
+        """停止查询"""
+        self.log("正在停止查询...", "WARNING")
+        # 调用查询模块的取消方法
+        if hasattr(self, 'jxcx') and self.jxcx:
+            self.jxcx.cancel_query()
+        # 标记查询状态为已取消
+        self.is_querying = False
+        self.log("已发送取消请求，请等待当前批次完成...", "WARNING")
 
     def _query_worker(self, table_names, start_date, end_date, city):
+        """查询工作线程"""
         try:
-            total = len(table_names)
+            from datetime import datetime, timedelta
+
+            total_tables = len(table_names)
+            multi_day = self.multi_day_var.get()
+            multi_day_per_sheet = self.multi_day_per_sheet_var.get()
+
             for idx, table_name in enumerate(table_names):
-                if self._stop_requested:
-                    self.log("查询已被用户停止", "WARNING")
-                    break
-                self.log(f"正在查询: {table_name} ({idx+1}/{total})", "INFO")
-                self.root.after(0, lambda i=idx, t=total, n=table_name: self._update_progress_detail(i, t, n))
+                self.log(f"正在查询: {table_name}", "INFO")
+                self.update_progress(idx, total_tables, f"正在查询: {table_name}")
                 table_config = TableConfig.get_table_config(table_name)
-                if table_config:
-                    self.jxcx.enter_jxcx()
-                    dimension = table_config.get('dimension', {})
-                    fields = table_config.get('fields', None)
+                if not table_config:
+                    self.log(f"未找到表配置: {table_name}", "ERROR")
+                    continue
+
+                self.jxcx.enter_jxcx()
+
+                # 4G语音小区：需要分别查询VoLTE和EPSFB表后合并（跳过payload_func处理）
+                is_4g_voice = table_config.get('is_4g_voice', False)
+                if is_4g_voice:
+                    self.log(f"4G语音小区报表：VoLTE + EPSFB 联合查询", "INFO")
+                    self._query_4g_voice_table(
+                        table_config, start_date, end_date, city,
+                        multi_day, multi_day_per_sheet
+                    )
+                    self.log(f"查询完成: {table_name}", "SUCCESS")
+                    continue
+
+                # 检查是否有硬编码的payload函数
+                payload_func = table_config.get('payload_func')
+                if payload_func:
+                    # 检查是否是工参报表（使用__gongcan__标记）
+                    # 先获取payload模板看看是否为工参报表
+                    payload_template = payload_func()
+                    if payload_template and payload_template.get('__gongcan__'):
+                        # 工参报表需要特殊处理（不需要时间条件）
+                        self.log(f"工参报表: 使用table类型API", "INFO")
+                        conditions = table_config.get('default_conditions', []).copy()
+                        if city:
+                            conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+
+                        gongcan_payload = self.jxcx.build_payload_from_config(
+                            payload_template.get('table_key'),
+                            payload_template.get('fieldtype'),
+                            conditions,
+                            payload_template.get('api_type', 'table'),
+                            dimension_override={
+                                'geographicdimension': payload_template.get('geographicdimension', ''),
+                                'timedimension': payload_template.get('timedimension', ''),
+                                'enodebField': payload_template.get('enodebField', ''),
+                                'cgiField': payload_template.get('cgiField', ''),
+                                'timeField': payload_template.get('timeField', ''),
+                                'cellField': payload_template.get('cellField', ''),
+                                'cityField': payload_template.get('cityField', '')
+                            }
+                        )
+                        if gongcan_payload:
+                            df = self.jxcx.get_table(gongcan_payload, report_name=table_name)
+                            if not df.empty:
+                                filename = f"{table_name}.xlsx"
+                                filepath = export_with_format(df, filename, table_name)
+                                if filepath:
+                                    self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
+                                else:
+                                    self.log(f"导出失败: {table_name}", "ERROR")
+                            else:
+                                self.log(f"查询结果为空: {table_name}", "WARNING")
+                        self.log(f"查询完成: {table_name}", "SUCCESS")
+                        continue
+
+                    # 按日查询模式
+                    if multi_day:
+                        # 按日查询模式：每天分别查询
+                        current_date = datetime.strptime(start_date, '%Y-%m-%d')
+                        end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
+                        dates = []
+                        while current_date <= end_datetime:
+                            dates.append(current_date.strftime('%Y-%m-%d'))
+                            current_date += timedelta(days=1)
+
+                        total_days = len(dates)
+                        self.log(f"按日查询模式: 共 {total_days} 天", "INFO")
+
+                        all_dfs = []  # 用于收集所有日数据
+
+                        for day_idx, query_date in enumerate(dates):
+                            self.log(f"查询 {table_name} [{day_idx + 1}/{total_days}]: {query_date}", "INFO")
+                            self.update_progress(idx + day_idx / total_days, total_tables,
+                                               f"查询 {table_name}: {query_date}")
+
+                            # 调用payload_func，传入单日日期
+                            payload = payload_func(query_date, query_date, city)
+
+                            if payload:
+                                # 调试日志：输出where条件中的日期
+                                if 'where' in payload:
+                                    for cond in payload['where']:
+                                        if 'starttime' in cond.get('feild', '') and 'time' in cond.get('feild', '').lower():
+                                            self.log(f"  [调试] 日期条件: {cond.get('feild')} {cond.get('symbol')} {cond.get('val')}", "INFO")
+                                df = self.jxcx.get_table(payload, report_name=table_name)
+                                if not df.empty:
+                                    # 检查是否需要添加计算列（全程完好率报表）
+                                    calc_columns = table_config.get('calc_columns', [])
+                                    add_calc = bool(calc_columns)
+
+                                    if multi_day_per_sheet:
+                                        # 按日分Sheet模式：每天一个Sheet
+                                        if add_calc:
+                                            try:
+                                                if '4G全程完好率' in table_name:
+                                                    df = self._add_4g_wanchenglv_calc_columns(df)
+                                                elif '5G全程完好率' in table_name:
+                                                    df = self._add_5g_wanchenglv_calc_columns(df)
+                                                self.log(f"  [计算列] {query_date} 计算列添加完成", "SUCCESS")
+                                            except Exception as e:
+                                                self.log(f"  [计算列] {query_date} 计算列添加异常: {e}", "WARNING")
+                                        all_dfs.append((query_date.replace('-', ''), df))
+                                    else:
+                                        # 按日分文件模式：每天一个文件
+                                        if add_calc:
+                                            try:
+                                                if '4G全程完好率' in table_name:
+                                                    df = self._add_4g_wanchenglv_calc_columns(df)
+                                                elif '5G全程完好率' in table_name:
+                                                    df = self._add_5g_wanchenglv_calc_columns(df)
+                                                self.log(f"  [计算列] {query_date} 计算列添加完成", "SUCCESS")
+                                            except Exception as e:
+                                                self.log(f"  [计算列] {query_date} 计算列添加异常: {e}", "WARNING")
+                                        day_filename = f"{table_name}_{query_date}.xlsx"
+                                        day_filepath = export_with_format(df, day_filename, table_name)
+                                        if day_filepath:
+                                            self.log(f"  {query_date}: {len(df)} 条数据 -> {os.path.basename(day_filepath)}", "SUCCESS")
+                                        all_dfs.append(df)
+
+                        # 按日分Sheet模式：合并所有日到同一文件
+                        if multi_day_per_sheet and all_dfs:
+                            day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                            self._export_multi_sheet(day_filename, all_dfs, table_name)
+                            self.log(f"按日分Sheet导出完成: {day_filename}", "SUCCESS")
+
+                        # 按日分文件模式：合并所有日到同一文件
+                        if not multi_day_per_sheet and all_dfs:
+                            combined_df = pd.concat(all_dfs, ignore_index=True)
+                            day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                            combined_filepath = export_with_format(combined_df, day_filename, table_name)
+                            if combined_filepath:
+                                self.log(f"按日查询导出完成: {os.path.basename(combined_filepath)} ({len(combined_df)} 条)", "SUCCESS")
+
+                        if not all_dfs:
+                            self.log(f"查询结果为空: {table_name}", "WARNING")
+                    else:
+                        # 普通模式：按日期范围查询
+                        self.log(f"使用硬编码payload模板: {table_name}", "INFO")
+                        self.log(f"  [调试] 查询日期范围: {start_date} 至 {end_date}", "INFO")
+                        payload = payload_func(start_date, end_date, city)
+
+                        if payload:
+                            # 调试日志：输出where条件中的日期
+                            if 'where' in payload:
+                                for cond in payload['where']:
+                                    if 'starttime' in cond.get('feild', ''):
+                                        self.log(f"  [调试] 日期条件: {cond.get('feild')} {cond.get('symbol')} {cond.get('val')}", "INFO")
+                            df = self.jxcx.get_table(payload, report_name=table_name)
+                            if not df.empty:
+                                # 检查是否需要添加计算列（全程完好率报表）
+                                calc_columns = table_config.get('calc_columns', [])
+                                if calc_columns:
+                                    self.log(f"[计算列] 开始为 {table_name} 添加计算列: {calc_columns}", "INFO")
+                                    try:
+                                        if '4G全程完好率' in table_name:
+                                            df = self._add_4g_wanchenglv_calc_columns(df)
+                                        elif '5G全程完好率' in table_name:
+                                            df = self._add_5g_wanchenglv_calc_columns(df)
+                                        self.log(f"[计算列] {table_name} 计算列添加完成", "SUCCESS")
+                                    except Exception as e:
+                                        self.log(f"[计算列] {table_name} 计算列添加异常: {e}", "ERROR")
+
+                                filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                                filepath = export_with_format(df, filename, table_name)
+                                if filepath:
+                                    self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
+                                else:
+                                    self.log(f"导出失败: {table_name}", "ERROR")
+                            else:
+                                self.log(f"查询结果为空: {table_name}", "WARNING")
+
+                    self.log(f"查询完成: {table_name}", "SUCCESS")
+                    continue
+
+                # 获取维度参数和字段配置
+                dimension = table_config.get('dimension', {})
+                # 根据用户选择的模式决定字段获取方式
+                field_mode = getattr(self, 'field_mode_var', None)
+                use_hardcode_fields = field_mode.get() == 'hardcode' if field_mode else True
+                # 如果使用硬编码模式且有预定义字段，则使用；否则动态获取
+                fields = table_config.get('fields', None) if use_hardcode_fields else None
+                if use_hardcode_fields and fields:
+                    self.log(f"使用硬编码字段配置 (共 {len(fields)} 个字段)", "INFO")
+                elif use_hardcode_fields:
+                    self.log("使用硬编码模式但未找到预定义字段，将动态获取", "WARNING")
+                else:
+                    self.log("使用动态字段获取模式", "INFO")
+                is_gongcan = table_config.get('is_gongcan', False)
+                is_4g_voice = table_config.get('is_4g_voice', False)
+
+                # 4G语音小区：需要分别查询VoLTE和EPSFB表后合并
+                if is_4g_voice:
+                    self.log(f"4G语音小区报表：VoLTE + EPSFB 联合查询", "INFO")
+                    self._query_4g_voice_table(
+                        table_config, start_date, end_date, city,
+                        multi_day, multi_day_per_sheet
+                    )
+                    self.log(f"查询完成: {table_name}", "SUCCESS")
+                    continue
+
+                # 工参报表不需要时间条件，直接按原逻辑处理
+                if is_gongcan:
                     conditions = table_config.get('default_conditions', []).copy()
-                    is_gongcan = table_config.get('is_gongcan', False)
-                    if not is_gongcan:
-                        conditions.append({'field': 'starttime', 'operator': '>=', 'value': start_date})
-                        conditions.append({'field': 'starttime', 'operator': '<=', 'value': end_date})
                     if city:
                         conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+
                     payload = self.jxcx.build_payload_from_config(
                         table_config['table_key'],
                         table_config['fieldtype'],
                         conditions,
                         table_config['api_type'],
                         dimension_override=dimension if dimension else None,
-                        fields_override=fields
+                        fields_override=fields,
+                        table_name=table_config.get('table_name')
                     )
+
                     if payload:
-                        df = self.jxcx.get_table(payload)
+                        df = self.jxcx.get_table(payload, report_name=table_name)
                         if not df.empty:
-                            if self.custom_fields_var.get() and table_name in self.selected_fields:
-                                selected_field_keys = self.selected_fields[table_name]
-                                available_fields = [col for col in df.columns if col in selected_field_keys]
-                                if not available_fields and table_name in self.field_configs:
-                                    config_map = {c.get('columnname'): c.get('columnname') for c in self.field_configs[table_name]}
-                                    for col in df.columns:
-                                        if col in config_map and config_map[col] in selected_field_keys:
-                                            available_fields.append(col)
-                                if available_fields:
-                                    df = df[available_fields]
-                                    self.log(f"应用自定义字段: {len(available_fields)} 个字段", "INFO")
-                                else:
-                                    self.log(f"没有选中的字段可用，将导出全部字段", "WARNING")
-                            import os
-                            from core.export import export_with_format
+                            self._apply_custom_fields(df, table_name)
                             filename = f"{table_name}_{start_date}_{end_date}.xlsx"
                             filepath = export_with_format(df, filename, table_name)
                             if filepath:
                                 self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-                                self.root.after(0, lambda fn=table_name, fc=len(df): self._add_preview_row(fn, fc))
                             else:
                                 self.log(f"导出失败: {table_name}", "ERROR")
                         else:
                             self.log(f"查询结果为空: {table_name}", "WARNING")
-                        self.log(f"查询完成: {table_name}", "SUCCESS")
-                    progress_pct = int((idx + 1) / total * 100)
-                    self.root.after(0, lambda p=progress_pct: self._update_progress_bar(p))
+                    self.log(f"查询完成: {table_name}", "SUCCESS")
+                    continue
+
+                # 非工参报表：按日查询处理
+                if multi_day:
+                    # 按日查询模式：每天分别查询
+                    current_date = datetime.strptime(start_date, '%Y-%m-%d')
+                    end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
+                    dates = []
+                    while current_date <= end_datetime:
+                        dates.append(current_date.strftime('%Y-%m-%d'))
+                        current_date += timedelta(days=1)
+
+                    total_days = len(dates)
+                    self.log(f"按日查询模式: 共 {total_days} 天", "INFO")
+
+                    all_dfs = []  # 用于收集所有日数据
+                    per_sheet_writer = None  # 用于按日分Sheet
+
+                    for day_idx, query_date in enumerate(dates):
+                        self.log(f"查询 {table_name} [{day_idx + 1}/{total_days}]: {query_date}", "INFO")
+                        self.update_progress(idx + day_idx / total_days, total_tables,
+                                           f"查询 {table_name}: {query_date}")
+
+                        conditions = table_config.get('default_conditions', []).copy()
+                        conditions.append({'field': 'starttime', 'operator': '>=', 'value': query_date})
+                        conditions.append({'field': 'starttime', 'operator': '<=', 'value': query_date})
+                        if city:
+                            conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+
+                        payload = self.jxcx.build_payload_from_config(
+                            table_config['table_key'],
+                            table_config['fieldtype'],
+                            conditions,
+                            table_config['api_type'],
+                            dimension_override=dimension if dimension else None,
+                            fields_override=fields,
+                            table_name=table_config.get('table_name')
+                        )
+
+                        if payload:
+                            df = self.jxcx.get_table(payload, report_name=table_name)
+                            if not df.empty:
+                                if multi_day_per_sheet:
+                                    # 按日分Sheet模式：每天一个Sheet
+                                    day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                                    day_filepath = export_with_format(
+                                        df, day_filename,
+                                        sheet_name=query_date.replace('-', '')
+                                    )
+                                    if day_filepath:
+                                        self.log(f"  {query_date}: {len(df)} 条数据 -> Sheet", "SUCCESS")
+                                    all_dfs.append((query_date, df))
+                                else:
+                                    # 按日分文件模式：每天一个文件
+                                    day_filename = f"{table_name}_{query_date}.xlsx"
+                                    day_filepath = export_with_format(df, day_filename, table_name)
+                                    if day_filepath:
+                                        self.log(f"  {query_date}: {len(df)} 条数据 -> {os.path.basename(day_filepath)}", "SUCCESS")
+                                    all_dfs.append(df)
+
+                    # 按日分Sheet模式：合并所有日到同一文件
+                    if multi_day_per_sheet and all_dfs:
+                        day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                        self._export_multi_sheet(day_filename, all_dfs, table_name)
+                        self.log(f"按日分Sheet导出完成: {day_filename}", "SUCCESS")
+
+                    # 按日分文件模式：合并所有日到同一文件
+                    if not multi_day_per_sheet and all_dfs:
+                        combined_df = pd.concat(all_dfs, ignore_index=True)
+                        day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                        combined_filepath = export_with_format(combined_df, day_filename, table_name)
+                        if combined_filepath:
+                            self.log(f"按日查询导出完成: {os.path.basename(combined_filepath)} ({len(combined_df)} 条)", "SUCCESS")
+
+                    if not all_dfs:
+                        self.log(f"查询结果为空: {table_name}", "WARNING")
+
+                else:
+                    # 普通模式：按日期范围查询（原有逻辑）
+                    conditions = table_config.get('default_conditions', []).copy()
+                    conditions.append({'field': 'starttime', 'operator': '>=', 'value': start_date})
+                    conditions.append({'field': 'starttime', 'operator': '<=', 'value': end_date})
+                    if city:
+                        conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+
+                    payload = self.jxcx.build_payload_from_config(
+                        table_config['table_key'],
+                        table_config['fieldtype'],
+                        conditions,
+                        table_config['api_type'],
+                        dimension_override=dimension if dimension else None,
+                        fields_override=fields,
+                        table_name=table_config.get('table_name')
+                    )
+
+                    if payload:
+                        df = self.jxcx.get_table(payload, report_name=table_name)
+                        if not df.empty:
+                            self._apply_custom_fields(df, table_name)
+                            filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                            filepath = export_with_format(df, filename, table_name)
+                            if filepath:
+                                self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
+                            else:
+                                self.log(f"导出失败: {table_name}", "ERROR")
+                        else:
+                            self.log(f"查询结果为空: {table_name}", "WARNING")
+
+                self.log(f"查询完成: {table_name}", "SUCCESS")
+
             self.root.after(0, self._on_query_complete)
         except Exception as e:
             self.root.after(0, lambda: self.log(f"查询异常: {e}", "ERROR"))
+            import traceback
+            traceback.print_exc()
             self.root.after(0, self._on_query_failed)
 
-    def _add_preview_row(self, filename, count):
-        if hasattr(self, 'preview_guide') and self.preview_guide.winfo_exists():
-            self.preview_guide.pack_forget()
-        if not self.preview_tree.winfo_ismapped():
-            self.preview_tree.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
-        self.preview_tree.insert('', 0, values=(filename, count, '完成'))
-        self._update_preview_stats()
+    def _apply_custom_fields(self, df, table_name):
+        """应用自定义字段选择到 DataFrame"""
+        if self.custom_fields_var.get() and table_name in self.selected_fields:
+            selected_field_keys = self.selected_fields[table_name]
+            available_fields = [col for col in df.columns if col in selected_field_keys]
+            if not available_fields and table_name in self.field_configs:
+                config_map = {c.get('columnname'): c.get('columnname') for c in self.field_configs[table_name]}
+                for col in df.columns:
+                    if col in config_map and config_map[col] in selected_field_keys:
+                        available_fields.append(col)
+            if available_fields:
+                df = df[available_fields]
+                self.log(f"应用自定义字段: {len(available_fields)} 个字段", "INFO")
+            else:
+                self.log(f"没有选中的字段可用，将导出全部字段", "WARNING")
+        return df
 
-    def _update_preview_stats(self):
-        if not hasattr(self, 'preview_stats'):
+    def _export_multi_sheet(self, filename, sheets_data, default_sheet):
+        """导出多Sheet的Excel文件
+
+        Args:
+            filename: 文件名
+            sheets_data: list of (sheet_name, DataFrame) tuples
+            default_sheet: 默认工作表名称
+        """
+        import pandas as pd
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+        ensure_dirs()
+        filepath = os.path.join(OUTPUT_DIR, filename)
+
+        wb = Workbook()
+        wb.remove(wb.active)  # 移除默认sheet
+
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        header_fill = PatternFill(start_color='165DFF', end_color='165DFF', fill_type='solid')
+        header_font = Font(bold=True, color='FFFFFF', size=11)
+        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        for sheet_name, df in sheets_data:
+            ws = wb.create_sheet(title=str(sheet_name)[:31])  # Sheet名最多31字符
+            ws.append(list(df.columns))
+
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = header_alignment
+                cell.border = thin_border
+
+            for row in df.itertuples(index=False):
+                ws.append(list(row))
+
+            for column in ws.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except (AttributeError, TypeError):
+                        pass
+                ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
+
+        wb.save(filepath)
+
+    def _query_4g_voice_table(self, table_config, start_date, end_date, city,
+                               multi_day, multi_day_per_sheet):
+        """查询4G语音小区报表（VoLTE + EPSFB 联合查询）
+
+        Args:
+            table_config: 表配置
+            start_date: 开始日期
+            end_date: 结束日期
+            city: 地市
+            multi_day: 是否按日查询
+            multi_day_per_sheet: 是否按日分Sheet
+        """
+        from datetime import datetime, timedelta
+        import numpy as np
+
+        volte_fields = table_config.get('volte_fields', [])
+        epsfb_fields = table_config.get('epsfb_fields', [])
+
+        if not volte_fields or not epsfb_fields:
+            self.log(f"4G语音小区字段配置不完整，无法查询", "ERROR")
             return
-        total_items = len(self.preview_tree.get_children())
-        total_records = 0
-        for item in self.preview_tree.get_children():
-            values = self.preview_tree.item(item, 'values')
-            try:
-                total_records += int(values[1])
-            except (ValueError, IndexError):
-                pass
-        self.preview_stats.pack(fill=tk.X, pady=(0, 4))
-        self.preview_stats_label.config(text=f"共 {total_items} 个表, {total_records} 条记录")
+
+        # VoLTE和EPSFB的维度配置
+        volte_dimension = table_config.get('dimension', {})
+        epsfb_dimension = {
+            'geographicdimension': '小区',
+            'timedimension': '天',
+            'enodebField': '---',  # EPSFB表没有enodeb字段
+            'cgiField': 'cgi',
+            'timeField': 'starttime',
+            'cellField': 'cell',
+            'cityField': 'city',
+        }
+
+        # 按日查询模式
+        if multi_day:
+            current_date = datetime.strptime(start_date, '%Y-%m-%d')
+            end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
+            dates = []
+            while current_date <= end_datetime:
+                dates.append(current_date.strftime('%Y-%m-%d'))
+                current_date += timedelta(days=1)
+
+            total_days = len(dates)
+            self.log(f"4G语音小区 - 按日查询模式: 共 {total_days} 天", "INFO")
+
+            all_merged_dfs = []
+
+            for day_idx, query_date in enumerate(dates):
+                self.log(f"4G语音小区 [{day_idx + 1}/{total_days}]: {query_date}", "INFO")
+                self.update_progress(day_idx, total_days, f"查询4G语音小区: {query_date}")
+
+                # 构建VoLTE和EPSFB的查询条件
+                conditions = [
+                    {'field': 'starttime', 'operator': '>=', 'value': query_date},
+                    {'field': 'starttime', 'operator': '<=', 'value': query_date},
+                ]
+                if city:
+                    conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+
+                # 构建payload
+                payloads = self.jxcx.build_4g_voice_payload(
+                    volte_fields, epsfb_fields, conditions,
+                    volte_dimension, epsfb_dimension
+                )
+                volte_payload = payloads['volte']
+                epsfb_payload = payloads['epsfb']
+
+                # 获取数据
+                voice_data = self.jxcx.get_4g_voice_table(volte_payload, epsfb_payload)
+                merged_df = voice_data
+
+                if not merged_df.empty:
+                    # 添加计算列
+                    try:
+                        merged_df = self._add_4g_voice_calc_columns(merged_df)
+                    except Exception as e:
+                        self.log(f"  添加计算列异常: {e}", "WARNING")
+
+                    if multi_day_per_sheet:
+                        # 按日分Sheet模式：每天一个Sheet
+                        all_merged_dfs.append((query_date.replace('-', ''), merged_df))
+                    else:
+                        # 按日分文件模式：每天一个文件
+                        filename = f"4G语音小区_{query_date}.xlsx"
+                        filepath = export_with_format(merged_df, filename, "4G语音小区")
+                        if filepath:
+                            self.log(f"  {query_date}: {len(merged_df)} 条数据 -> {os.path.basename(filepath)}", "SUCCESS")
+
+            # 按日分Sheet模式：合并所有日到同一文件
+            if multi_day_per_sheet and all_merged_dfs:
+                filename = f"4G语音小区_{start_date}_{end_date}.xlsx"
+                self._export_multi_sheet(filename, all_merged_dfs, "4G语音小区")
+                self.log(f"按日分Sheet导出完成: {filename}", "SUCCESS")
+
+        else:
+            # 普通模式：按日期范围查询
+            conditions = [
+                {'field': 'starttime', 'operator': '>=', 'value': start_date},
+                {'field': 'starttime', 'operator': '<=', 'value': end_date},
+            ]
+            if city:
+                conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+
+            self.log(f"4G语音小区: 查询 {start_date} 至 {end_date}", "INFO")
+
+            # 构建payload
+            payloads = self.jxcx.build_4g_voice_payload(
+                volte_fields, epsfb_fields, conditions,
+                volte_dimension, epsfb_dimension
+            )
+            volte_payload = payloads['volte']
+            epsfb_payload = payloads['epsfb']
+
+            # 获取数据
+            merged_df = self.jxcx.get_4g_voice_table(volte_payload, epsfb_payload)
+
+            if not merged_df.empty:
+                # 添加计算列
+                try:
+                    merged_df = self._add_4g_voice_calc_columns(merged_df)
+                except Exception as e:
+                    self.log(f"添加计算列异常: {e}", "WARNING")
+
+                filename = f"4G语音小区_{start_date}_{end_date}.xlsx"
+                filepath = export_with_format(merged_df, filename, "4G语音小区")
+                if filepath:
+                    self.log(f"4G语音小区数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
+            else:
+                self.log(f"4G语音小区查询结果为空", "WARNING")
+
+    def _add_4g_voice_calc_columns(self, df):
+        """添加4G语音小区计算列（预警报表版本）
+
+        计算规则：
+        - 4G语音通话质差时长比例 = (VoLTE语音上行吞字时长+VoLTE语音上行单通时长+VoLTE语音上行断续时长+EPSFB语音上行吞字时长+EPSFB语音上行单通时长+EPSFB语音上行断续时长) / (VoLTE语音上行总时长+EPSFB语音上行总时长)
+        - 4G差小区 = (VoLTE语音通话质差时长比例>2% 且 VoLTE通话次数>1000) 或者 (EPSFB语音通话质差时长比例>2% 且 EPSFB通话次数>1000)
+
+        Args:
+            df: 合并后的DataFrame
+
+        Returns:
+            DataFrame: 添加了计算列的DataFrame
+        """
+        import numpy as np
+
+        # 获取VoLTE和EPSFB的字段名（预警报表使用中文名）
+        volte_ul_tunzi = None
+        volte_ul_dantong = None
+        volte_ul_duanxu = None
+        volte_ul_sum = None
+        volte_call = None
+        epsfb_ul_tunzi = None
+        epsfb_ul_dantong = None
+        epsfb_ul_duanxu = None
+        epsfb_ul_sum = None
+        epsfb_call = None
+
+        for col in df.columns:
+            col_lower = col.lower()
+            # 预警报表的中文字段名
+            if 'volte' in col_lower and '上行' in col and '吞字' in col:
+                volte_ul_tunzi = col
+            elif 'volte' in col_lower and '上行' in col and '单通' in col:
+                volte_ul_dantong = col
+            elif 'volte' in col_lower and '上行' in col and '断续' in col:
+                volte_ul_duanxu = col
+            elif 'volte' in col_lower and '上行' in col and '总时长' in col:
+                volte_ul_sum = col
+            elif 'volte' in col_lower and ('通话次数' in col or '语音通话总次数' in col):
+                volte_call = col
+            elif 'epsfb' in col_lower and '上行' in col and '吞字' in col:
+                epsfb_ul_tunzi = col
+            elif 'epsfb' in col_lower and '上行' in col and '单通' in col:
+                epsfb_ul_dantong = col
+            elif 'epsfb' in col_lower and '上行' in col and '断续' in col:
+                epsfb_ul_duanxu = col
+            elif 'epsfb' in col_lower and '上行' in col and '总时长' in col:
+                epsfb_ul_sum = col
+            elif 'epsfb' in col_lower and ('通话次数' in col or '语音通话总次数' in col):
+                epsfb_call = col
+
+        # 如果没找到中文列名，尝试使用英文列名
+        if volte_ul_tunzi is None:
+            for col in df.columns:
+                if 'volte_ul_tunzi' in col.lower():
+                    volte_ul_tunzi = col
+                    break
+        if volte_ul_dantong is None:
+            for col in df.columns:
+                if 'volte_ul_dantong' in col.lower():
+                    volte_ul_dantong = col
+                    break
+        if volte_ul_duanxu is None:
+            for col in df.columns:
+                if 'volte_ul_duanxu' in col.lower():
+                    volte_ul_duanxu = col
+                    break
+        if volte_ul_sum is None:
+            for col in df.columns:
+                if 'volte_ul_voice_sum' in col.lower():
+                    volte_ul_sum = col
+                    break
+        if volte_call is None:
+            for col in df.columns:
+                if 'volte_ans_voice' in col.lower():
+                    volte_call = col
+                    break
+        if epsfb_ul_tunzi is None:
+            for col in df.columns:
+                if 'epsfb_ul_tunzi' in col.lower():
+                    epsfb_ul_tunzi = col
+                    break
+        if epsfb_ul_dantong is None:
+            for col in df.columns:
+                if 'epsfb_ul_dantong' in col.lower():
+                    epsfb_ul_dantong = col
+                    break
+        if epsfb_ul_duanxu is None:
+            for col in df.columns:
+                if 'epsfb_ul_duanxu' in col.lower():
+                    epsfb_ul_duanxu = col
+                    break
+        if epsfb_ul_sum is None:
+            for col in df.columns:
+                if 'epsfb_ul_voice_sum' in col.lower():
+                    epsfb_ul_sum = col
+                    break
+        if epsfb_call is None:
+            for col in df.columns:
+                if 'epsfb_ans_voice' in col.lower():
+                    epsfb_call = col
+                    break
+
+        # 记录找到的字段
+        found_fields = []
+        missing_fields = []
+        if volte_ul_tunzi:
+            found_fields.append(f"VoLTE上行吞字={volte_ul_tunzi[:20]}...")
+        else:
+            missing_fields.append("VoLTE上行吞字")
+        if volte_ul_dantong:
+            found_fields.append(f"VoLTE上行单通={volte_ul_dantong[:20]}...")
+        else:
+            missing_fields.append("VoLTE上行单通")
+        if volte_ul_duanxu:
+            found_fields.append(f"VoLTE上行断续={volte_ul_duanxu[:20]}...")
+        else:
+            missing_fields.append("VoLTE上行断续")
+        if volte_ul_sum:
+            found_fields.append(f"VoLTE上行总时长={volte_ul_sum[:20]}...")
+        else:
+            missing_fields.append("VoLTE上行总时长")
+        if volte_call:
+            found_fields.append(f"VoLTE通话次数={volte_call[:20]}...")
+        else:
+            missing_fields.append("VoLTE通话次数")
+        if epsfb_ul_tunzi:
+            found_fields.append(f"EPSFB上行吞字={epsfb_ul_tunzi[:20]}...")
+        else:
+            missing_fields.append("EPSFB上行吞字")
+        if epsfb_ul_dantong:
+            found_fields.append(f"EPSFB上行单通={epsfb_ul_dantong[:20]}...")
+        else:
+            missing_fields.append("EPSFB上行单通")
+        if epsfb_ul_duanxu:
+            found_fields.append(f"EPSFB上行断续={epsfb_ul_duanxu[:20]}...")
+        else:
+            missing_fields.append("EPSFB上行断续")
+        if epsfb_ul_sum:
+            found_fields.append(f"EPSFB上行总时长={epsfb_ul_sum[:20]}...")
+        else:
+            missing_fields.append("EPSFB上行总时长")
+        if epsfb_call:
+            found_fields.append(f"EPSFB通话次数={epsfb_call[:20]}...")
+        else:
+            missing_fields.append("EPSFB通话次数")
+
+        self.log(f"[4G语音计算] 找到字段: {len(found_fields)}, 缺失: {len(missing_fields)}", "INFO")
+        if missing_fields:
+            self.log(f"[4G语音计算] 缺失字段: {missing_fields}", "WARNING")
+
+        # 计算4G语音通话质差时长比例
+        # = (VoLTE语音上行吞字时长+VoLTE语音上行单通时长+VoLTE语音上行断续时长+EPSFB语音上行吞字时长+EPSFB语音上行单通时长+EPSFB语音上行断续时长)
+        #   / (VoLTE语音上行总时长+EPSFB语音上行总时长)
+        if all(v is not None for v in [volte_ul_tunzi, volte_ul_dantong, volte_ul_duanxu,
+                                         volte_ul_sum, epsfb_ul_tunzi, epsfb_ul_dantong,
+                                         epsfb_ul_duanxu, epsfb_ul_sum]):
+            total_bad = (df[volte_ul_tunzi].fillna(0) + df[volte_ul_dantong].fillna(0) +
+                         df[volte_ul_duanxu].fillna(0) + df[epsfb_ul_tunzi].fillna(0) +
+                         df[epsfb_ul_dantong].fillna(0) + df[epsfb_ul_duanxu].fillna(0))
+            total_sum = df[volte_ul_sum].fillna(0) + df[epsfb_ul_sum].fillna(0)
+            df['4G语音通话质差时长比例'] = np.where(total_sum > 0, (total_bad / total_sum * 100).round(4), np.nan)
+            self.log(f"[4G语音计算] 4G语音通话质差时长比例计算完成", "SUCCESS")
+        else:
+            self.log(f"[4G语音计算] 缺少必要字段，无法计算4G语音通话质差时长比例", "WARNING")
+
+        # 计算4G语音差小区判定
+        # 条件：(VoLTE语音通话质差时长比例>2%且VoLTE通话次数>1000)
+        # 或者 (EPSFB语音通话质差时长比例>2%且EPSFB通话次数>1000)
+        volte_bad_rate = None
+        epsfb_bad_rate = None
+
+        if volte_ul_sum and volte_ul_tunzi and volte_ul_dantong and volte_ul_duanxu:
+            volte_total_bad = df[volte_ul_tunzi].fillna(0) + df[volte_ul_dantong].fillna(0) + df[volte_ul_duanxu].fillna(0)
+            volte_total = df[volte_ul_sum].fillna(0)
+            volte_bad_rate = np.where(volte_total > 0, volte_total_bad / volte_total * 100, 0)
+
+        if epsfb_ul_sum and epsfb_ul_tunzi and epsfb_ul_dantong and epsfb_ul_duanxu:
+            epsfb_total_bad = df[epsfb_ul_tunzi].fillna(0) + df[epsfb_ul_dantong].fillna(0) + df[epsfb_ul_duanxu].fillna(0)
+            epsfb_total = df[epsfb_ul_sum].fillna(0)
+            epsfb_bad_rate = np.where(epsfb_total > 0, epsfb_total_bad / epsfb_total * 100, 0)
+
+        if volte_bad_rate is not None and volte_call is not None:
+            volte_is_bad = (volte_bad_rate > 2) & (df[volte_call].fillna(0) > 1000)
+            bad_volte_count = volte_is_bad.sum()
+            self.log(f"[4G语音计算] VoLTE差小区数量: {bad_volte_count}", "INFO")
+        else:
+            volte_is_bad = pd.Series([False] * len(df))
+            self.log(f"[4G语音计算] 无法计算VoLTE差小区（缺少字段）", "WARNING")
+
+        if epsfb_bad_rate is not None and epsfb_call is not None:
+            epsfb_is_bad = (epsfb_bad_rate > 2) & (df[epsfb_call].fillna(0) > 1000)
+            bad_epsfb_count = epsfb_is_bad.sum()
+            self.log(f"[4G语音计算] EPSFB差小区数量: {bad_epsfb_count}", "INFO")
+        else:
+            epsfb_is_bad = pd.Series([False] * len(df))
+            self.log(f"[4G语音计算] 无法计算EPSFB差小区（缺少字段）", "WARNING")
+
+        df['4G语音差小区'] = np.where(volte_is_bad | epsfb_is_bad, '是', '否')
+        bad_cell_count = (df['4G语音差小区'] == '是').sum()
+        self.log(f"[4G语音计算] 4G语音差小区总计: {bad_cell_count}", "SUCCESS")
+
+        return df
+
+    def _add_4g_wanchenglv_calc_columns(self, df):
+        """添加4G全程完好率计算列
+
+        计算规则：
+        - 4G无线接通率(%) = (RRC连接建立成功次数/RRC连接建立请求次数) * (E-RAB建立成功数/E-RAB建立请求数)
+        - 4G切换成功率(%) = 切换成功次数/切换请求次数
+        - 4G E-RAB掉线率 = (切出失败的E-RAB数 - 正常的eNB请求释放的E-RAB数 + eNB请求释放的E-RAB数)
+                           / (遗留上下文个数 + E-RAB建立成功数 + 切换入E-RAB数)
+        - 4G全程完好率 = 4G无线接通率(%) * 4G切换成功率(%) * (100 - 4G E-RAB掉线率)
+        - 4G是否差小区 = 全程完好率 < 85% 时为"是"，否则为"否"
+
+        Args:
+            df: 4G全程完好率报表的DataFrame
+
+        Returns:
+            DataFrame: 添加了计算列的DataFrame
+        """
+        import numpy as np
+
+        # 字段名映射（英文 -> 中文/通用名）
+        field_map = {}
+        for col in df.columns:
+            col_lower = col.lower() if isinstance(col, str) else ''
+            # RRC连接建立成功次数
+            if col_lower in ('succconnestab', 'rrc连接建立成功次数'):
+                field_map['rrc_succ'] = col
+            # RRC连接建立请求次数
+            elif col_lower in ('attconnestab', 'rrc连接建立请求次数'):
+                field_map['rrc_att'] = col
+            # E-RAB建立成功数
+            elif col_lower in ('nbrsuccestab', 'e-rab建立成功数'):
+                field_map['erab_succ'] = col
+            # E-RAB建立请求数
+            elif col_lower in ('nbrattestab', 'e-rab建立请求数'):
+                field_map['erab_att'] = col
+            # 切换成功次数
+            elif col_lower in ('ho_succ_out', '切换成功次数'):
+                field_map['ho_succ'] = col
+            # 切换请求次数
+            elif col_lower in ('ho_att__out', '切换请求次数'):
+                field_map['ho_att'] = col
+            # 切出失败的E-RAB数
+            elif col_lower in ('hofail', '切出失败的e-rab数'):
+                field_map['ho_fail'] = col
+            # 正常的eNB请求释放的E-RAB数
+            elif col_lower in ('nbrreqrelenb_normal', '正常的enb请求释放的e-rab数'):
+                field_map['erab_normal_rel'] = col
+            # eNB请求释放的E-RAB数
+            elif col_lower in ('nbrreqrelenb', 'enb请求释放的e-rab数'):
+                field_map['erab_rel'] = col
+            # 遗留上下文个数
+            elif col_lower in ('nbrleft', '遗留上下文个数'):
+                field_map['context_left'] = col
+            # 切换入E-RAB数
+            elif col_lower in ('nbrhoinc', '切换入e-rab数'):
+                field_map['ho_inc'] = col
+
+        self.log(f"[4G全程完好率] 字段映射: {list(field_map.keys())}", "INFO")
+
+        # ========== 1. 计算4G无线接通率(%) ==========
+        if 'rrc_succ' in field_map and 'rrc_att' in field_map and 'erab_succ' in field_map and 'erab_att' in field_map:
+            rrc_succ = df[field_map['rrc_succ']].fillna(0).astype(float)
+            rrc_att = df[field_map['rrc_att']].fillna(0).astype(float)
+            erab_succ = df[field_map['erab_succ']].fillna(0).astype(float)
+            erab_att = df[field_map['erab_att']].fillna(0).astype(float)
+
+            rrc_rate = np.where(rrc_att > 0, rrc_succ / rrc_att * 100, np.nan)
+            erab_rate = np.where(erab_att > 0, erab_succ / erab_att * 100, np.nan)
+            df['4G无线接通率(%)'] = np.where(
+                (rrc_att > 0) & (erab_att > 0),
+                rrc_rate * erab_rate,
+                np.nan
+            )
+            df['4G无线接通率(%)'] = df['4G无线接通率(%)'].round(4)
+            valid_count = df['4G无线接通率(%)'].notna().sum()
+            self.log(f"[4G全程完好率] 4G无线接通率计算完成, 有效数据: {valid_count}", "SUCCESS")
+        else:
+            missing = [k for k in ['rrc_succ', 'rrc_att', 'erab_succ', 'erab_att'] if k not in field_map]
+            self.log(f"[4G全程完好率] 缺少字段无法计算4G无线接通率: {missing}", "WARNING")
+
+        # ========== 2. 计算4G切换成功率(%) ==========
+        if 'ho_succ' in field_map and 'ho_att' in field_map:
+            ho_succ = df[field_map['ho_succ']].fillna(0).astype(float)
+            ho_att = df[field_map['ho_att']].fillna(0).astype(float)
+            df['4G切换成功率(%)'] = np.where(ho_att > 0, ho_succ / ho_att * 100, np.nan)
+            df['4G切换成功率(%)'] = df['4G切换成功率(%)'].round(4)
+            valid_count = df['4G切换成功率(%)'].notna().sum()
+            self.log(f"[4G全程完好率] 4G切换成功率计算完成, 有效数据: {valid_count}", "SUCCESS")
+        else:
+            missing = [k for k in ['ho_succ', 'ho_att'] if k not in field_map]
+            self.log(f"[4G全程完好率] 缺少字段无法计算4G切换成功率: {missing}", "WARNING")
+
+        # ========== 3. 计算4G E-RAB掉线率 ==========
+        if all(k in field_map for k in ['ho_fail', 'erab_normal_rel', 'erab_rel', 'context_left', 'erab_succ', 'ho_inc']):
+            ho_fail = df[field_map['ho_fail']].fillna(0).astype(float)
+            erab_normal_rel = df[field_map['erab_normal_rel']].fillna(0).astype(float)
+            erab_rel = df[field_map['erab_rel']].fillna(0).astype(float)
+            context_left = df[field_map['context_left']].fillna(0).astype(float)
+            erab_succ = df[field_map['erab_succ']].fillna(0).astype(float)
+            ho_inc = df[field_map['ho_inc']].fillna(0).astype(float)
+
+            numerator = ho_fail - erab_normal_rel + erab_rel
+            denominator = context_left + erab_succ + ho_inc
+            df['4G_E-RAB掉线率(%)'] = np.where(denominator > 0, numerator / denominator * 100, np.nan)
+            df['4G_E-RAB掉线率(%)'] = df['4G_E-RAB掉线率(%)'].round(4)
+            valid_count = df['4G_E-RAB掉线率(%)'].notna().sum()
+            self.log(f"[4G全程完好率] 4G E-RAB掉线率计算完成, 有效数据: {valid_count}", "SUCCESS")
+        else:
+            missing = [k for k in ['ho_fail', 'erab_normal_rel', 'erab_rel', 'context_left', 'erab_succ', 'ho_inc'] if k not in field_map]
+            self.log(f"[4G全程完好率] 缺少字段无法计算4G E-RAB掉线率: {missing}", "WARNING")
+
+        # ========== 4. 计算4G全程完好率 ==========
+        if '4G无线接通率(%)' in df.columns and '4G切换成功率(%)' in df.columns and '4G_E-RAB掉线率(%)' in df.columns:
+            df['4G全程完好率(%)'] = (
+                df['4G无线接通率(%)'] *
+                df['4G切换成功率(%)'] *
+                (100 - df['4G_E-RAB掉线率(%)'])
+            ).round(4)
+            valid_count = df['4G全程完好率(%)'].notna().sum()
+            self.log(f"[4G全程完好率] 4G全程完好率计算完成, 有效数据: {valid_count}", "SUCCESS")
+        else:
+            self.log(f"[4G全程完好率] 无法计算4G全程完好率(缺少前置指标)", "WARNING")
+
+        # ========== 5. 判断4G是否差小区 ==========
+        if '4G全程完好率(%)' in df.columns:
+            df['4G是否差小区'] = np.where(df['4G全程完好率(%)'] < 85, '是', '否')
+            bad_count = (df['4G是否差小区'] == '是').sum()
+            self.log(f"[4G全程完好率] 4G是否差小区计算完成, 差小区数量: {bad_count}", "SUCCESS")
+
+        return df
+
+    def _add_5g_wanchenglv_calc_columns(self, df):
+        """添加5G全程完好率计算列
+
+        计算规则：
+        - SA无线接通率% = (RRC连接建立成功次数/RRC连接建立请求次数)
+                        * (Flow建立成功数/Flow建立请求数)
+                        * (NG接口UE相关逻辑信令连接建立成功次数/NG接口UE相关逻辑信令连接建立请求次数)
+        - SA无线掉线率% = (gNB请求释放上下文数 - 正常的gNB请求释放上下文数)
+                       / (初始上下文建立成功次数 + 遗留上下文个数 + 切换入成功次数 + RRC连接重建成功次数(非源侧小区))
+        - SA切换成功率% = (gNB间NG切换出成功次数 + gNB间Xn切换出成功次数 + CU内DU间切换出执行成功次数 + CU内DU内切换出成功次数)
+                        / (gNB间NG切换出准备请求次数 + gNB间Xn切换出准备请求次数 + CU内DU间切换出执行请求次数 + CU内DU内切换出执行请求次数)
+        - 5G全程完好率 = SA无线接通率% * SA切换成功率% * (100 - SA无线掉线率%)
+        - 5G是否差小区 = 全程完好率 < 85% 时为"是"，否则为"否"
+
+        Args:
+            df: 5G全程完好率报表的DataFrame
+
+        Returns:
+            DataFrame: 添加了计算列的DataFrame
+        """
+        import numpy as np
+
+        # 字段名映射（英文 -> 通用名）
+        field_map = {}
+        for col in df.columns:
+            col_lower = col.lower() if isinstance(col, str) else ''
+            # RRC连接建立成功次数
+            if col_lower in ('rrc_succconnestab', 'rrc连接建立成功次数'):
+                field_map['rrc_succ'] = col
+            # RRC连接建立请求次数
+            elif col_lower in ('rrc_attconnestab', 'rrc连接建立请求次数'):
+                field_map['rrc_att'] = col
+            # Flow建立成功数
+            elif col_lower in ('flow_nbrsuccestab', 'flow建立成功数'):
+                field_map['flow_succ'] = col
+            # Flow建立请求数
+            elif col_lower in ('flow_nbrattestab', 'flow建立请求数'):
+                field_map['flow_att'] = col
+            # NG接口UE相关逻辑信令连接建立成功次数
+            elif col_lower in ('ngsig_connestabsucc', 'ng接口ue相关逻辑信令连接建立成功次数'):
+                field_map['ngsig_succ'] = col
+            # NG接口UE相关逻辑信令连接建立请求次数
+            elif col_lower in ('ngsig_connestabatt', 'ng接口ue相关逻辑信令连接建立请求次数'):
+                field_map['ngsig_att'] = col
+            # gNB请求释放上下文数
+            elif col_lower in ('context_attrelgnb', 'gnb请求释放上下文数'):
+                field_map['context_rel'] = col
+            # 正常的gNB请求释放上下文数
+            elif col_lower in ('context_attrelgnb_normal', '正常的gnb请求释放上下文数'):
+                field_map['context_rel_normal'] = col
+            # 初始上下文建立成功次数
+            elif col_lower in ('context_succinitalsetup', '初始上下文建立成功次数'):
+                field_map['context_init_succ'] = col
+            # 遗留上下文个数
+            elif col_lower in ('context_nbrleft', '遗留上下文个数'):
+                field_map['context_left'] = col
+            # 切换入成功次数
+            elif col_lower in ('ho_succexecinc', '切换入成功次数'):
+                field_map['ho_inc_succ'] = col
+            # RRC连接重建成功次数(非源侧小区)
+            elif col_lower in ('rrc_succconnreestab_nonsrccell', 'rrc连接重建成功次数(非源侧小区)'):
+                field_map['rrc_reestab_succ'] = col
+            # gNB间NG切换出成功次数
+            elif col_lower in ('ho_succoutintercung', 'gnb间ng切换出成功次数'):
+                field_map['ho_ng_succ'] = col
+            # gNB间Xn切换出成功次数
+            elif col_lower in ('ho_succoutintercuxn', 'gnb间xn切换出成功次数'):
+                field_map['ho_xn_succ'] = col
+            # CU内DU间切换出执行成功次数
+            elif col_lower in ('ho_succoutintracuinterdu', 'cu内du间切换出执行成功次数'):
+                field_map['ho_cu_du_succ'] = col
+            # CU内DU内切换出成功次数
+            elif col_lower in ('ho_succoutintradu', 'cu内du内切换出成功次数'):
+                field_map['ho_cu_intra_succ'] = col
+            # gNB间NG切换出准备请求次数
+            elif col_lower in ('ho_attoutintercung', 'gnb间ng切换出准备请求次数'):
+                field_map['ho_ng_att'] = col
+            # gNB间Xn切换出准备请求次数
+            elif col_lower in ('ho_attoutintercuxn', 'gnb间xn切换出准备请求次数'):
+                field_map['ho_xn_att'] = col
+            # CU内DU间切换出执行请求次数
+            elif col_lower in ('ho_attoutintracuinterdu', 'cu内du间切换出执行请求次数'):
+                field_map['ho_cu_du_att'] = col
+            # CU内DU内切换出执行请求次数
+            elif col_lower in ('ho_attoutcuintradu', 'cu内du内切换出执行请求次数'):
+                field_map['ho_cu_intra_att'] = col
+
+        self.log(f"[5G全程完好率] 字段映射: {list(field_map.keys())}", "INFO")
+
+        # ========== 1. 计算SA无线接通率% ==========
+        rrc_ok = all(k in field_map for k in ['rrc_succ', 'rrc_att'])
+        flow_ok = all(k in field_map for k in ['flow_succ', 'flow_att'])
+        ngsig_ok = all(k in field_map for k in ['ngsig_succ', 'ngsig_att'])
+
+        if rrc_ok and flow_ok and ngsig_ok:
+            rrc_succ = df[field_map['rrc_succ']].fillna(0).astype(float)
+            rrc_att = df[field_map['rrc_att']].fillna(0).astype(float)
+            flow_succ = df[field_map['flow_succ']].fillna(0).astype(float)
+            flow_att = df[field_map['flow_att']].fillna(0).astype(float)
+            ngsig_succ = df[field_map['ngsig_succ']].fillna(0).astype(float)
+            ngsig_att = df[field_map['ngsig_att']].fillna(0).astype(float)
+
+            rrc_rate = np.where(rrc_att > 0, rrc_succ / rrc_att, 0)
+            flow_rate = np.where(flow_att > 0, flow_succ / flow_att, 0)
+            ngsig_rate = np.where(ngsig_att > 0, ngsig_succ / ngsig_att, 0)
+
+            df['SA无线接通率(%)'] = np.where(
+                (rrc_att > 0) & (flow_att > 0) & (ngsig_att > 0),
+                rrc_rate * flow_rate * ngsig_rate * 100,
+                np.nan
+            )
+            df['SA无线接通率(%)'] = df['SA无线接通率(%)'].round(4)
+            valid_count = df['SA无线接通率(%)'].notna().sum()
+            self.log(f"[5G全程完好率] SA无线接通率计算完成, 有效数据: {valid_count}", "SUCCESS")
+        else:
+            missing = []
+            if not rrc_ok:
+                missing.extend([k for k in ['rrc_succ', 'rrc_att'] if k not in field_map])
+            if not flow_ok:
+                missing.extend([k for k in ['flow_succ', 'flow_att'] if k not in field_map])
+            if not ngsig_ok:
+                missing.extend([k for k in ['ngsig_succ', 'ngsig_att'] if k not in field_map])
+            self.log(f"[5G全程完好率] 缺少字段无法计算SA无线接通率: {missing}", "WARNING")
+
+        # ========== 2. 计算SA无线掉线率% ==========
+        drop_ok = all(k in field_map for k in ['context_rel', 'context_rel_normal', 'context_init_succ',
+                                                  'context_left', 'ho_inc_succ', 'rrc_reestab_succ'])
+        if drop_ok:
+            context_rel = df[field_map['context_rel']].fillna(0).astype(float)
+            context_rel_normal = df[field_map['context_rel_normal']].fillna(0).astype(float)
+            context_init_succ = df[field_map['context_init_succ']].fillna(0).astype(float)
+            context_left = df[field_map['context_left']].fillna(0).astype(float)
+            ho_inc_succ = df[field_map['ho_inc_succ']].fillna(0).astype(float)
+            rrc_reestab_succ = df[field_map['rrc_reestab_succ']].fillna(0).astype(float)
+
+            numerator = context_rel - context_rel_normal
+            denominator = context_init_succ + context_left + ho_inc_succ + rrc_reestab_succ
+
+            df['SA无线掉线率(%)'] = np.where(denominator > 0, numerator / denominator * 100, np.nan)
+            df['SA无线掉线率(%)'] = df['SA无线掉线率(%)'].round(4)
+            valid_count = df['SA无线掉线率(%)'].notna().sum()
+            self.log(f"[5G全程完好率] SA无线掉线率计算完成, 有效数据: {valid_count}", "SUCCESS")
+        else:
+            missing = [k for k in ['context_rel', 'context_rel_normal', 'context_init_succ',
+                                    'context_left', 'ho_inc_succ', 'rrc_reestab_succ'] if k not in field_map]
+            self.log(f"[5G全程完好率] 缺少字段无法计算SA无线掉线率: {missing}", "WARNING")
+
+        # ========== 3. 计算SA切换成功率% ==========
+        ho_succ_ok = all(k in field_map for k in ['ho_ng_succ', 'ho_xn_succ', 'ho_cu_du_succ', 'ho_cu_intra_succ'])
+        ho_att_ok = all(k in field_map for k in ['ho_ng_att', 'ho_xn_att', 'ho_cu_du_att', 'ho_cu_intra_att'])
+
+        if ho_succ_ok and ho_att_ok:
+            ho_ng_succ = df[field_map['ho_ng_succ']].fillna(0).astype(float)
+            ho_xn_succ = df[field_map['ho_xn_succ']].fillna(0).astype(float)
+            ho_cu_du_succ = df[field_map['ho_cu_du_succ']].fillna(0).astype(float)
+            ho_cu_intra_succ = df[field_map['ho_cu_intra_succ']].fillna(0).astype(float)
+            ho_ng_att = df[field_map['ho_ng_att']].fillna(0).astype(float)
+            ho_xn_att = df[field_map['ho_xn_att']].fillna(0).astype(float)
+            ho_cu_du_att = df[field_map['ho_cu_du_att']].fillna(0).astype(float)
+            ho_cu_intra_att = df[field_map['ho_cu_intra_att']].fillna(0).astype(float)
+
+            succ_total = ho_ng_succ + ho_xn_succ + ho_cu_du_succ + ho_cu_intra_succ
+            att_total = ho_ng_att + ho_xn_att + ho_cu_du_att + ho_cu_intra_att
+
+            df['SA切换成功率(%)'] = np.where(att_total > 0, succ_total / att_total * 100, np.nan)
+            df['SA切换成功率(%)'] = df['SA切换成功率(%)'].round(4)
+            valid_count = df['SA切换成功率(%)'].notna().sum()
+            self.log(f"[5G全程完好率] SA切换成功率计算完成, 有效数据: {valid_count}", "SUCCESS")
+        else:
+            missing = []
+            if not ho_succ_ok:
+                missing.extend([k for k in ['ho_ng_succ', 'ho_xn_succ', 'ho_cu_du_succ', 'ho_cu_intra_succ'] if k not in field_map])
+            if not ho_att_ok:
+                missing.extend([k for k in ['ho_ng_att', 'ho_xn_att', 'ho_cu_du_att', 'ho_cu_intra_att'] if k not in field_map])
+            self.log(f"[5G全程完好率] 缺少字段无法计算SA切换成功率: {missing}", "WARNING")
+
+        # ========== 4. 计算5G全程完好率 ==========
+        if 'SA无线接通率(%)' in df.columns and 'SA切换成功率(%)' in df.columns and 'SA无线掉线率(%)' in df.columns:
+            df['5G全程完好率(%)'] = (
+                df['SA无线接通率(%)'] *
+                df['SA切换成功率(%)'] *
+                (100 - df['SA无线掉线率(%)'])
+            ).round(4)
+            valid_count = df['5G全程完好率(%)'].notna().sum()
+            self.log(f"[5G全程完好率] 5G全程完好率计算完成, 有效数据: {valid_count}", "SUCCESS")
+        else:
+            self.log(f"[5G全程完好率] 无法计算5G全程完好率(缺少前置指标)", "WARNING")
+
+        # ========== 5. 判断5G是否差小区 ==========
+        if '5G全程完好率(%)' in df.columns:
+            df['5G是否差小区'] = np.where(df['5G全程完好率(%)'] < 85, '是', '否')
+            bad_count = (df['5G是否差小区'] == '是').sum()
+            self.log(f"[5G全程完好率] 5G是否差小区计算完成, 差小区数量: {bad_count}", "SUCCESS")
+
+        return df
 
     def _on_query_complete(self):
+        """查询完成回调"""
         self.is_querying = False
-        self._stop_requested = False
         self.extract_btn.config(state=tk.NORMAL, text="▶ 开始提取")
         self.stop_btn.config(state=tk.DISABLED)
-        self._update_preview_stats()
-        self._update_progress_bar(100)
-        self.progress_lbl_detail.config(text="查询完成")
+        self.status_text.config(text="查询完成")
+        self.status_dot.config(fg='#22c55e')  # 绿色
+        self.update_progress(100, 100, "查询完成")
         self.log("所有查询完成！", "SUCCESS")
 
     def _on_query_failed(self):
+        """查询失败回调"""
         self.is_querying = False
-        self._stop_requested = False
         self.extract_btn.config(state=tk.NORMAL, text="▶ 开始提取")
         self.stop_btn.config(state=tk.DISABLED)
-        self.progress_lbl_detail.config(text="查询失败")
-
-    def _update_progress_detail(self, current, total, table_name):
-        pct = int((current + 1) / total * 100)
-        self.progress_lbl_pct.config(text=f"进度: {pct}%")
-        self.progress_lbl_detail.config(text=f"正在查询: {table_name} ({current+1}/{total})")
-        self._update_progress_bar(pct)
-
-    def _update_progress_bar(self, pct):
-        if not hasattr(self, 'progress_canvas') or not self.progress_canvas.winfo_exists():
-            return
-        self.progress_canvas.update_idletasks()
-        canvas_width = self.progress_canvas.winfo_width()
-        bar_width = int(canvas_width * pct / 100)
-        self.progress_canvas.coords(self.progress_bg, 0, 0, canvas_width, 6)
-        self.progress_canvas.coords(self.progress_bar, 0, 0, bar_width, 6)
+        self.status_text.config(text="查询失败")
+        self.status_dot.config(fg='#ef4444')  # 红色
+        self.reset_progress()
 
     def log(self, message, level="INFO"):
+        """输出日志"""
+        self.log_text.config(state='normal')
+
         tag_map = {
             'INFO': 'INFO',
             'ERROR': 'ERROR',
             'WARNING': 'WARNING',
             'SUCCESS': 'SUCCESS'
         }
-        timestamp = datetime.now().strftime('%H:%M:%S')
+
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_line = f"[{timestamp}] {message}\n"
-        self.log_text.config(state='normal')
+
         self.log_text.insert(tk.END, log_line, (tag_map.get(level, 'INFO'),))
-        if self._log_auto_scroll:
-            self.log_text.see(tk.END)
+        self.log_text.see(tk.END)
         self.log_text.config(state='disabled')
 
     def load_config(self):
+        """加载配置"""
         self.log("NQI工具已就绪", "INFO")
         self.log(f"支持的数据表: {', '.join(TableConfig.get_table_names())}", "INFO")
-        self._load_user_config()
-
-    def _save_user_config(self):
-        import json
-        try:
-            config = {}
-            if hasattr(self, 'city_dropdown'):
-                config['cities'] = self.city_dropdown.get_selected()
-            if hasattr(self, 'table_dropdown'):
-                config['tables'] = self.table_dropdown.get_selected()
-            if self._use_tkcalendar and hasattr(self, 'start_date_entry'):
-                config['start_date'] = self.start_date_entry.get_date().strftime('%Y-%m-%d')
-                config['end_date'] = self.end_date_entry.get_date().strftime('%Y-%m-%d')
-            config_path = os.path.join(os.getcwd(), 'user_config.json')
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            self.logger.warning(f"保存配置失败: {e}")
-
-    def _load_user_config(self):
-        import json
-        try:
-            config_path = os.path.join(os.getcwd(), 'user_config.json')
-            if not os.path.exists(config_path):
-                return
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            if 'cities' in config and hasattr(self, 'city_dropdown'):
-                self.city_dropdown.set_selected(config['cities'], trigger_callback=False)
-            if 'tables' in config and hasattr(self, 'table_dropdown'):
-                self.table_dropdown.set_selected(config['tables'], trigger_callback=False)
-            if 'start_date' in config and self._use_tkcalendar and hasattr(self, 'start_date_entry'):
-                from datetime import datetime as dt
-                self.start_date_entry.set_date(dt.strptime(config['start_date'], '%Y-%m-%d'))
-            if 'end_date' in config and self._use_tkcalendar and hasattr(self, 'end_date_entry'):
-                from datetime import datetime as dt
-                self.end_date_entry.set_date(dt.strptime(config['end_date'], '%Y-%m-%d'))
-            self.log("已加载上次配置", "INFO")
-        except Exception as e:
-            self.logger.warning(f"加载配置失败: {e}")
 
     def run(self):
         """运行应用"""
@@ -1518,139 +2365,227 @@ class NqiToolGUI:
         self.root.destroy()
 
     def _show_activate_window(self):
-        """显示序列号激活窗口"""
-        from core.license import generate_machine_code, get_hw_info
-
+        """显示用户码激活窗口（新融合方案）"""
+        # 获取本机机器码
         hw_info = get_hw_info()
         machine_code = generate_machine_code(hw_info)
 
+        # 创建激活窗口
         activate_win = tk.Toplevel(self.root)
         activate_win.title("授权激活")
-        activate_win.geometry("500x380")
+        activate_win.geometry("600x450")
         activate_win.resizable(False, False)
 
+        # 设置窗口在主窗口中间
         self.root.update_idletasks()
-        x = (self.root.winfo_width() - 500) // 2 + self.root.winfo_x()
-        y = (self.root.winfo_height() - 380) // 2 + self.root.winfo_y()
-        activate_win.geometry(f"500x380+{x}+{y}")
+        x = (self.root.winfo_width() - 600) // 2 + self.root.winfo_x()
+        y = (self.root.winfo_height() - 450) // 2 + self.root.winfo_y()
+        activate_win.geometry(f"600x450+{x}+{y}")
 
         activate_win.transient(self.root)
         activate_win.grab_set()
 
-        content = tk.Frame(activate_win, bg='#f8f9fa')
-        content.pack(fill=tk.BOTH, expand=True, padx=25, pady=25)
+        # 顶部标题
+        header = tk.Frame(activate_win, bg='#165DFF', height=50)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
 
-        title = tk.Label(content, text="授权激活",
-                        font=('Microsoft YaHei UI', 18, 'bold'),
-                        bg='#f8f9fa', fg='#1a1a2e')
-        title.pack(pady=(0, 20))
+        tk.Label(header, text="🎫 授权激活",
+                font=('Microsoft YaHei UI', 16, 'bold'),
+                bg='#165DFF', fg='white').pack(pady=12)
 
+        # 主内容
+        content = tk.Frame(activate_win, bg='#f9fafb')
+        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # 本机信息卡片
         info_card = tk.Frame(content, bg='white')
         info_card.pack(fill=tk.X, pady=(0, 15))
 
-        tk.Label(info_card, text="本机信息",
+        tk.Label(info_card, text="📋 本机信息",
                 font=('Microsoft YaHei UI', 12, 'bold'),
-                bg='white', fg='#1a1a2e', anchor='w').pack(padx=15, pady=(12, 8))
+                bg='white', fg='#374151', anchor='w').pack(padx=15, pady=(12, 5))
 
         machine_frame = tk.Frame(info_card, bg='white')
         machine_frame.pack(fill=tk.X, padx=15, pady=(0, 12))
 
         tk.Label(machine_frame, text="机器码：",
-                font=('Microsoft YaHei UI', 9),
-                bg='white', fg='#6c757d').pack(side=tk.LEFT)
+                font=('Microsoft YaHei UI', 9, 'bold'),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT)
 
         machine_code_label = tk.Label(machine_frame, text=machine_code,
-                                    font=('Consolas', 9),
-                                    bg='white', fg='#495057')
+                                    font=('Consolas', 8),
+                                    bg='white', fg='#5f6368')
         machine_code_label.pack(side=tk.LEFT, padx=(5, 0))
 
-        tk.Button(machine_frame, text="复制",
+        tk.Button(machine_frame, text="📋 复制",
                 font=('Microsoft YaHei UI', 8),
-                bg='#e9ecef', fg='#495057', bd=0,
-                cursor='hand2', padx=10, pady=3,
+                bg='#f0f2f5', fg='#202124', bd=1,
+                cursor='arrow', relief='raised', padx=8, pady=2,
                 command=lambda: self._copy_to_clipboard(activate_win, machine_code)).pack(side=tk.RIGHT)
 
+        # 当前授权状态卡片
+        status_card = tk.Frame(content, bg='white')
+        status_card.pack(fill=tk.X, pady=(0, 15))
+
+        tk.Label(status_card, text="📊 当前授权状态",
+                font=('Microsoft YaHei UI', 12, 'bold'),
+                bg='white', fg='#374151', anchor='w').pack(padx=15, pady=(12, 8))
+
+        status_frame = tk.Frame(status_card, bg='white')
+        status_frame.pack(fill=tk.X, padx=15, pady=(0, 12))
+
+        # 检查当前授权状态
+        info = get_user_code_info()
+        if info:
+            if info['days_left'] == -1:
+                status_text = f"✅ 已授权（永久）"
+                status_color = '#22c55e'
+            elif info['days_left'] > 0:
+                status_text = f"✅ 已授权（剩余 {info['days_left']} 天，到期 {info['expiry_date']}）"
+                status_color = '#22c55e'
+            else:
+                status_text = f"❌ 授权已过期（{info['expiry_date']}）"
+                status_color = '#ef4444'
+        else:
+            status_text = "❌ 未授权"
+            status_color = '#ef4444'
+
+        status_label = tk.Label(status_frame, text=status_text,
+                               font=('Microsoft YaHei UI', 10),
+                               bg='white', fg=status_color)
+        status_label.pack(anchor='w')
+
+        # 激活输入卡片
         input_card = tk.Frame(content, bg='white')
         input_card.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(input_card, text="输入序列号",
+        tk.Label(input_card, text="🔑 输入用户码",
                 font=('Microsoft YaHei UI', 12, 'bold'),
-                bg='white', fg='#1a1a2e', anchor='w').pack(padx=15, pady=(12, 5))
+                bg='white', fg='#374151', anchor='w').pack(padx=15, pady=(12, 5))
 
-        tk.Label(input_card, text="请输入管理员提供的验证序列号：",
+        tk.Label(input_card, text="请输入管理员提供的用户码：",
                 font=('Microsoft YaHei UI', 9),
-                bg='white', fg='#6c757d', anchor='w').pack(padx=15, pady=(0, 8))
+                bg='white', fg='#9ca3af', anchor='w').pack(padx=15, pady=(0, 8))
 
         serial_frame = tk.Frame(input_card, bg='white')
         serial_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
 
         serial_entry = tk.Entry(serial_frame,
-                              font=('Consolas', 11),
+                              font=('Consolas', 10),
                               relief='flat', bg='#f8f9fa', bd=0)
-        serial_entry.pack(fill=tk.X, ipady=10)
+        serial_entry.pack(fill=tk.X, ipady=8)
 
-        tk.Label(serial_frame, text="格式示例：NQI-xxxx-xxxx-xxxx",
+        tk.Label(serial_frame, text="用户码为 Base64 编码的字符串（由管理员生成）",
                 font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#adb5bd').pack(anchor='w', pady=(4, 0))
+                bg='white', fg='#9ca3af').pack(anchor='w', pady=(4, 0))
 
-        btn_frame = tk.Frame(content, bg='#f8f9fa')
+        # 按钮
+        btn_frame = tk.Frame(content, bg='#f9fafb')
         btn_frame.pack(fill=tk.X, pady=(15, 0))
 
-        activate_btn = tk.Button(btn_frame, text="激活授权",
+        activate_btn = tk.Button(btn_frame, text="✅ 激活授权",
                  font=('Microsoft YaHei UI', 11, 'bold'),
-                 bg='#165DFF', fg='white', bd=0,
-                 cursor='hand2', padx=25, pady=8,
+                 bg='#22c55e', fg='white', bd=1,
+                 cursor='hand2', relief='raised', padx=25, pady=8,
                  command=lambda: self._do_activate(serial_entry.get(), machine_code, activate_win))
         activate_btn.pack(side=tk.LEFT)
 
+        # 注销按钮（如果已授权）
+        if info:
+            tk.Button(btn_frame, text="注销授权",
+                     font=('Microsoft YaHei UI', 10),
+                     bg='#fee2e2', fg='#dc2626', bd=1,
+                     cursor='arrow', relief='raised', padx=18, pady=8,
+                     command=lambda: self._do_deactivate(activate_win)).pack(side=tk.LEFT, padx=(10, 0))
+
         tk.Button(btn_frame, text="取消",
                  font=('Microsoft YaHei UI', 10),
-                 bg='#e9ecef', fg='#495057', bd=0,
-                 cursor='hand2', padx=18, pady=8,
+                 bg='#f0f2f5', fg='#202124', bd=1,
+                 cursor='arrow', relief='raised', padx=18, pady=8,
                  command=activate_win.destroy).pack(side=tk.RIGHT)
 
         serial_entry.focus()
+
+        # 回车激活
         serial_entry.bind('<Return>', lambda e: activate_btn.invoke())
 
-    def _do_activate(self, serial_number, machine_code, window):
-        """执行激活操作"""
-        if not serial_number or not serial_number.strip():
-            messagebox.showwarning("提示", "请输入序列号")
+    def _do_activate(self, user_code, machine_code, window):
+        """执行激活操作（新融合方案）
+
+        流程：
+        1. 解析用户码
+        2. 验证机器码匹配
+        3. 保存用户码
+        """
+        user_code = user_code.strip()
+        if not user_code:
+            messagebox.showwarning("提示", "请输入用户码")
             return
 
-        serial_number = serial_number.strip()
+        # 导入解密函数进行验证
+        from core.license import decrypt_user_code
 
-        success, result = verify_serial_number(serial_number, machine_code)
+        # 验证用户码
+        success, expiry_timestamp, auth_machine_code = decrypt_user_code(user_code)
 
-        if success:
-            write_success, write_msg = write_license_from_serial(result)
-            if write_success:
+        if not success:
+            messagebox.showerror("激活失败", "用户码格式错误或解密失败，请检查是否复制完整")
+            return
+
+        # 验证机器码匹配
+        if auth_machine_code != machine_code:
+            messagebox.showerror("激活失败", "用户码与本机机器码不匹配\n\n请确认您使用的是本机的用户码")
+            return
+
+        # 检查是否过期
+        if expiry_timestamp != 0:
+            from datetime import datetime as dt
+            expiry_date = dt.fromtimestamp(expiry_timestamp).strftime('%Y-%m-%d')
+            if expiry_timestamp < int(time.time()):
+                messagebox.showerror("激活失败", f"用户码已过期（{expiry_date}）")
+                return
+
+        # 保存用户码
+        if save_user_code(user_code):
+            window.destroy()
+            days_left = "永久" if expiry_timestamp == 0 else f"剩余 {(expiry_timestamp - int(time.time())) // 86400} 天"
+            messagebox.showinfo("成功", f"授权激活成功！\n\n到期时间：{expiry_date if expiry_timestamp != 0 else '永久'}\n状态：{days_left}")
+            # 重新加载授权信息
+            self._reload_license()
+        else:
+            messagebox.showerror("错误", "保存用户码失败")
+
+    def _do_deactivate(self, window):
+        """注销授权"""
+        if messagebox.askyesno("确认注销", "确定要注销当前授权吗？\n注销后需要重新激活才能使用。"):
+            if delete_user_code():
                 window.destroy()
-                messagebox.showinfo("成功", f"授权激活成功！\n\n过期时间：{result['expiry_time']}")
+                messagebox.showinfo("成功", "授权已注销")
                 self._reload_license()
             else:
-                messagebox.showerror("错误", f"写入授权文件失败：{write_msg}")
-        else:
-            messagebox.showerror("激活失败", result)
+                messagebox.showerror("错误", "注销授权失败")
 
     def _reload_license(self):
         """重新加载授权信息"""
-        from core.license import get_effective_expiry, verify_license, generate_machine_code
-
-        new_expiry = get_effective_expiry()
-        self.expiry_time = new_expiry
-
-        from core.license import get_hw_info
+        # 重新验证授权
         hw_info = get_hw_info()
         machine_code = generate_machine_code(hw_info)
 
-        valid, error = verify_license(machine_code)
+        valid, result = verify_with_user_code(machine_code)
 
         if valid:
+            # 更新过期时间显示
+            if result['days_left'] == -1:
+                self.expiry_time = datetime(2099, 12, 31)  # 永久
+            else:
+                self.expiry_time = datetime.fromtimestamp(result['expiry_timestamp'])
             self._update_license_display()
-            self.sidebar_status.config(fg='#22c55e')
+            self.status_text.config(text="系统就绪")
+            self.status_dot.config(fg='#22c55e')
+            self.activate_btn.config(bg='#22c55e')  # 绿色表示已激活
         else:
-            self.sidebar_status.config(fg='#fd7e14')
+            self.activate_btn.config(bg='#f59e0b')  # 橙色表示需要激活
 
     def _copy_to_clipboard(self, window, text):
         """复制到剪贴板"""

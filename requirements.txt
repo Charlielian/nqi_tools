@@ -1,23 +1,23 @@
-# NQI工具 依赖
+# 通用数据提取工具依赖
 # 安装命令: pip install -r requirements.txt
 
 # 核心依赖
 requests>=2.28.0
 pandas>=1.5.0
-openpyxl>=3.0.0  # Excel 导出
-
-# PyQt6 GUI 框架
-PyQt6>=6.5.0
+openpyxl>=3.0.0  # 用于 Excel 导出
 
 # 加密和解析
-pycryptodome>=3.15.0
+pycryptodome>=3.15.0  # RSA 加密 (如安装失败，尝试 pip install pycryptodome)
 lxml>=4.9.0
 
-# 验证码显示
+# GUI 验证码显示
 Pillow>=9.0.0
 
-# YAML 配置
+# 验证码识别 (可选，如未安装则需要手动输入)
+# pytesseract>=0.3.0
+
+# YAML 配置文件
 pyyaml>=6.0
 
-# Windows 系统信息
+# Windows 系统信息获取
 wmi>=1.5.1

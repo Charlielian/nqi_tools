@@ -8,33 +8,61 @@ import tkinter as tk
 from tkinter import ttk
 import logging
 
+# 导入字段配置
+from gui.field_configs import (
+    INTERFERENCE_5G_FIELDS, INTERFERENCE_4G_FIELDS,
+    VOLTE_4G_VOICE_FIELDS, EPSFB_4G_VOICE_FIELDS,
+    VOLTE_4G_VOICE_WARNING_FIELDS, EPSFB_4G_VOICE_WARNING_FIELDS,
+    CAPACITY_5G_FIELDS, IMPORTANT_SCENE_FIELDS,
+    GONGCAN_5G_FIELDS, GONGCAN_4G_FIELDS,
+    MR_5G_FIELDS, MR_4G_FIELDS,
+    VOLTE_WARNING_FIELDS, VONR_WARNING_FIELDS, EPSFB_WARNING_FIELDS,
+    KPI_4G_FIELDS, KPI_5G_FIELDS,
+    VOICE_5G_FIELDS,
+)
+
+# 导入硬编码Payload模板
+from gui.payload_templates import (
+    get_5g_interference_payload, get_4g_interference_payload,
+    get_5g_capacity_payload, get_important_scene_payload,
+    get_volte_warning_payload, get_epsfb_warning_payload, get_vonr_warning_payload,
+    get_4g_wanchenglv_payload, get_5g_wanchenglv_payload,
+    get_volte_payload, get_epsfb_payload, get_5g_voice_payload,
+    get_5g_gongcan_payload, get_4g_gongcan_payload,
+    get_5g_kpi_payload, get_4g_kpi_payload,
+    get_5g_mr_payload, get_4g_mr_payload,
+)
+
 
 class LogTextHandler(logging.Handler):
-    """日志处理器 - 将日志输出到Text组件"""
+    """日志处理器 - 将简洁日志输出到界面Text组件"""
 
     def __init__(self, text_widget):
         super().__init__()
         self.text_widget = text_widget
-        self.formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
-                                           datefmt='%Y-%m-%d %H:%M:%S')
+        self.setLevel(logging.INFO)
+        self.formatter = logging.Formatter('%(message)s')
 
     def emit(self, record):
-        msg = self.formatter.format(record) + '\n'
+        if record.levelno < logging.INFO:
+            return
+
+        msg = self.formatter.format(record)
+        if not msg.endswith('\n'):
+            msg += '\n'
 
         def append():
             self.text_widget.configure(state='normal')
             self.text_widget.insert(tk.END, msg)
 
             color_map = {
-                'DEBUG': '#888888',
-                'INFO': '#000000',
                 'WARNING': '#FFA500',
                 'ERROR': '#FF0000',
                 'CRITICAL': '#FF0000'
             }
 
             tag_name = f'tag_{record.levelname}'
-            self.text_widget.tag_config(tag_name, foreground=color_map.get(record.levelname, '#000000'))
+            self.text_widget.tag_config(tag_name, foreground=color_map.get(record.levelname, '#333333'))
 
             last_line_num = self.text_widget.index(tk.END).split('.')[0]
             start_idx = f'{int(last_line_num)-1}.0'
@@ -43,6 +71,11 @@ class LogTextHandler(logging.Handler):
 
             self.text_widget.see(tk.END)
             self.text_widget.configure(state='disabled')
+
+            max_lines = 1000
+            current_lines = int(self.text_widget.index(tk.END).split('.')[0])
+            if current_lines > max_lines:
+                self.text_widget.delete('1.0', f'{current_lines - max_lines}.0')
 
         try:
             self.text_widget.after(0, append)
@@ -128,176 +161,80 @@ class DateEntry(ttk.Entry):
 
 
 class MultiSelectDropdown(ttk.Frame):
-    """带复选框的下拉选择组件，支持搜索过滤"""
+    """带复选框的下拉选择组件"""
 
     GD_CITIES = ['广州', '深圳', '东莞', '佛山', '中山', '珠海', '江门', '肇庆',
                  '惠州', '汕头', '潮州', '揭阳', '汕尾', '湛江', '茂名', '阳江',
                  '云浮', '韶关', '梅州', '河源', '清远']
 
-    def __init__(self, parent, values, width=18, select_all=False, on_change_callback=None):
+    def __init__(self, parent, values, width=18, select_all=False):
         super().__init__(parent)
-        self.all_values = list(values)  # 保存所有原始值
-        self.values = list(values)
+        self.values = values
         self.var_dict = {}
-        self.on_change_callback = on_change_callback
-        self._suppress_callback = False  # 防循环标志
-
-        # 下拉框变量
         self.var = tk.StringVar(value="")
-
-        # 记录选择顺序（解决显示顺序问题）
         self._selected_order = []
-
-        # 创建 Entry
         self.entry = ttk.Entry(self, textvariable=self.var, width=width, state='readonly')
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        # 创建下拉按钮
         self.btn = ttk.Button(self, text="▼", width=3, command=self._toggle_dropdown)
         self.btn.pack(side=tk.LEFT)
-
-        # 创建下拉窗口
         self.dropdown = tk.Toplevel(self)
         self.dropdown.withdraw()
         self.dropdown.overrideredirect(True)
         self.dropdown.attributes('-topmost', True)
-
-        # 搜索框
-        search_frame = ttk.Frame(self.dropdown)
-        search_frame.pack(fill=tk.X, padx=2, pady=(2, 0))
-
-        self.search_var = tk.StringVar()
-        self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
-        self.search_entry.pack(fill=tk.X, padx=2, pady=2)
-        self.search_entry.bind('<KeyRelease>', self._on_search)
-        self.search_entry.bind('<Escape>', lambda e: self._close_dropdown())
-
-        # 复选框容器（带滚动条）
-        list_frame = ttk.Frame(self.dropdown)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-
-        # 添加滚动条
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.check_canvas = tk.Canvas(list_frame, bg='white', highlightthickness=0, yscrollcommand=scrollbar.set)
-        self.check_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.check_canvas.yview)
-
-        # 复选框内部框架
-        self.check_inner_frame = tk.Frame(self.check_canvas, bg='white')
-        self.check_canvas.create_window((0, 0), window=self.check_inner_frame, anchor='nw')
-
-        # 绑定配置事件
-        self.check_inner_frame.bind('<Configure>',
-            lambda e: self.check_canvas.configure(scrollregion=self.check_canvas.bbox('all')))
-
+        self.check_frame = ttk.Frame(self.dropdown)
+        self.check_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         self.check_vars = {}
-        self.check_buttons = {}
-        self._create_checkbuttons()
-
-        # 全选按钮
+        for val in values:
+            var = tk.BooleanVar(value=False)
+            self.check_vars[val] = var
+            cb = ttk.Checkbutton(
+                self.check_frame, text=val, variable=var,
+                command=lambda v=val: self._on_check_change(v)
+            )
+            cb.pack(anchor=tk.W, padx=5, pady=1)
         btn_frame = ttk.Frame(self.dropdown)
         btn_frame.pack(fill=tk.X, padx=2, pady=2)
         ttk.Button(btn_frame, text="全选", command=self._select_all).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text="取消", command=self._deselect_all).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text="确定", command=self._confirm).pack(side=tk.RIGHT, padx=2)
-
-        # 初始全选
         if select_all:
             self._select_all()
-
-    def _create_checkbuttons(self):
-        """创建所有复选框"""
-        # 清除现有复选框
-        for widget in self.check_inner_frame.winfo_children():
-            widget.destroy()
-        self.check_vars.clear()
-        self.check_buttons.clear()
-
-        for val in self.values:
-            var = tk.BooleanVar(value=val in self._selected_order)
-            self.check_vars[val] = var
-            cb = tk.Checkbutton(self.check_inner_frame, text=val, variable=var,
-                              font=('Microsoft YaHei UI', 8),
-                              bg='white', fg='#495057',
-                              selectcolor='#165DFF',
-                              activebackground='white',
-                              activeforeground='#495057',
-                              cursor='hand2',
-                              command=lambda v=val: self._on_check_change(v))
-            cb.pack(anchor=tk.W, padx=5, pady=1)
-            self.check_buttons[val] = cb
-
-    def _on_search(self, event=None):
-        """搜索过滤"""
-        search_text = self.search_var.get().strip().lower()
-
-        if not search_text:
-            self.values = list(self.all_values)
-        else:
-            self.values = [v for v in self.all_values if search_text in v.lower()]
-
-        self._create_checkbuttons()
-
-    def _close_dropdown(self):
-        """关闭下拉框"""
-        self.dropdown.withdraw()
-        self.search_var.set('')
-        self.values = list(self.all_values)
-        self._create_checkbuttons()
 
     def _toggle_dropdown(self):
         """切换下拉框显示"""
         if self.dropdown.winfo_viewable():
-            self._close_dropdown()
+            self.dropdown.withdraw()
         else:
             self._show_dropdown()
 
     def _show_dropdown(self):
-        """显示下拉框（自适应屏幕空间）"""
+        """显示下拉框"""
         self.dropdown.update_idletasks()
-
-        # 获取 Entry 的位置和尺寸
         entry_x = self.entry.winfo_rootx()
         entry_y = self.entry.winfo_rooty()
         entry_h = self.entry.winfo_height()
-
-        # 获取下拉框的所需尺寸
-        dropdown_w = max(250, self.dropdown.winfo_reqwidth())
-        dropdown_h = min(350, self.dropdown.winfo_reqheight())
-
-        # 获取屏幕工作区域尺寸（排除任务栏等）
+        dropdown_w = self.dropdown.winfo_reqwidth()
+        dropdown_h = self.dropdown.winfo_reqheight()
         screen_w = self.dropdown.winfo_screenwidth()
         screen_h = self.dropdown.winfo_screenheight()
-
-        # 计算下方和上方可用的空间
         space_below = screen_h - (entry_y + entry_h)
         space_above = entry_y
-
-        # 判断应该显示在上方还是下方
         if space_below >= dropdown_h or space_below >= space_above:
             y = entry_y + entry_h
         else:
             y = entry_y - dropdown_h
-
-        # 确保不会超出屏幕左右边界
         if entry_x + dropdown_w > screen_w:
             x = screen_w - dropdown_w
         else:
             x = entry_x
-
-        # 确保不会超出屏幕上边界
         if y < 0:
             y = 0
-
         self.dropdown.geometry(f"{dropdown_w}x{dropdown_h}+{x}+{y}")
         self.dropdown.deiconify()
         self.dropdown.lift()
-        self.search_entry.focus()
 
     def _on_check_change(self, val=None):
-        """复选框状态变化 - 记录选择顺序"""
+        """复选框状态变化"""
         if val is not None:
             var = self.check_vars.get(val)
             if var:
@@ -307,9 +244,6 @@ class MultiSelectDropdown(ttk.Frame):
                 else:
                     if val in self._selected_order:
                         self._selected_order.remove(val)
-                # 触发回调（防循环）
-                if self.on_change_callback and not self._suppress_callback:
-                    self.on_change_callback()
 
     def _select_all(self):
         """全选"""
@@ -330,38 +264,23 @@ class MultiSelectDropdown(ttk.Frame):
             self.var.set(','.join(selected))
         else:
             self.var.set("")
-        self._close_dropdown()
-        # 触发回调（防循环）
-        if self.on_change_callback and not self._suppress_callback:
-            self.on_change_callback()
+        self.dropdown.withdraw()
 
     def get_selected(self):
         """获取选中的值列表"""
         return [val for val, var in self.check_vars.items() if var.get()]
 
-    def set_selected(self, values, trigger_callback=True):
+    def set_selected(self, values):
         """设置选中的值"""
-        # 防循环
-        old_suppress = self._suppress_callback
-        self._suppress_callback = True
-        should_trigger = trigger_callback and self.on_change_callback
-
-        try:
-            self._selected_order = []
-            for val, var in self.check_vars.items():
-                var.set(val in values)
-                if val in values:
-                    self._selected_order.append(val)
-            if values:
-                self.var.set(','.join(values))
-            else:
-                self.var.set("")
-        finally:
-            self._suppress_callback = old_suppress
-
-        # 触发回调（在 suppress 恢复之前判断）
-        if should_trigger:
-            self.on_change_callback()
+        self._selected_order = []
+        for val, var in self.check_vars.items():
+            var.set(val in values)
+            if val in values:
+                self._selected_order.append(val)
+        if values:
+            self.var.set(','.join(values))
+        else:
+            self.var.set("")
 
     def get_value(self):
         """获取选中值（逗号分隔字符串）"""
@@ -371,69 +290,11 @@ class MultiSelectDropdown(ttk.Frame):
         """设置选中值（逗号分隔字符串）"""
         if value:
             values = [v.strip() for v in value.split(',')]
-            self.set_selected(values, trigger_callback=True)
-        else:
-            self._suppress_callback = True
-            try:
-                self._selected_order = []
-                for var in self.check_vars.values():
-                    var.set(False)
-                self.var.set("")
-            finally:
-                self._suppress_callback = False
-            # 触发回调
-            if self.on_change_callback:
-                self.on_change_callback()
+            self.set_selected(values)
 
 
 class TableConfig:
     """数据表配置类"""
-
-    # 5G干扰小区字段配置（完整结构，与旧版一致）
-    INTERFERENCE_5G_FIELDS = [
-        {'feild': 'starttime', 'feildName': '数据时间', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'endtime', 'feildName': '结束时间', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'cgi', 'feildName': 'CGI', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'cell_name', 'feildName': '小区名', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'freq', 'feildName': '频段', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'micro_grid', 'feildName': '微网格标识', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'averagevalue', 'feildName': '全频段均值', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'averagevalued1', 'feildName': 'D1均值', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'averagevalued2', 'feildName': 'D2均值', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-        {'feild': 'is_interfere_5g', 'feildName': '是否干扰小区', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '5G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_nr_cell_zb2_d', 'tableName': '5G干扰报表（忙时）'},
-    ]
-
-    # 4G干扰小区字段配置（完整结构，与旧版一致）
-    INTERFERENCE_4G_FIELDS = [
-        {'feild': 'starttime', 'feildName': '数据时间', 'datatype': '1', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-        {'feild': 'endtime', 'feildName': '结束时间', 'datatype': '1', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-        {'feild': 'cgi', 'feildName': 'CGI', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-        {'feild': 'cell_name', 'feildName': '小区名', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-        {'feild': 'freq', 'feildName': '频段', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-        {'feild': 'micro_grid', 'feildName': '微网格标识', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-        {'feild': 'bandwidth', 'feildName': '系统带宽', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-        {'feild': 'averagevalue', 'feildName': '平均干扰电平', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-        {'feild': 'is_interfere', 'feildName': '是否干扰小区', 'datatype': 'character varying', 'columntype': '1',
-         'feildtype': '4G干扰报表（忙时）', 'table': 'appdbv3.a_interfere_lte_cell_zb2_d', 'tableName': '4G干扰报表（忙时）'},
-    ]
 
     TABLE_CONFIGS = {
         # ========== 干扰类 ==========
@@ -443,6 +304,7 @@ class TableConfig:
             'table_name': 'appdbv3.a_interfere_nr_cell_zb2_d',
             'fieldtype': '5G干扰报表（忙时）',
             'api_type': 'search',
+            'payload_func': get_5g_interference_payload,
             'default_conditions': [
                 {'field': 'city', 'operator': 'like', 'value': '%%'},
             ],
@@ -463,6 +325,7 @@ class TableConfig:
             'table_name': 'appdbv3.a_interfere_lte_cell_zb2_d',
             'fieldtype': '4G干扰报表（忙时）',
             'api_type': 'search',
+            'payload_func': get_4g_interference_payload,
             'default_conditions': [
                 {'field': 'city', 'operator': 'like', 'value': '%%'},
             ],
@@ -485,6 +348,8 @@ class TableConfig:
             'table_name': 'appdbv3.a_adhoc_capacity_nr_nrcell_d',
             'fieldtype': '5G小区容量报表 - 天粒度',
             'api_type': 'table',
+            'payload_func': get_5g_capacity_payload,
+            'fields': CAPACITY_5G_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',
@@ -502,6 +367,8 @@ class TableConfig:
             'table_name': 'appdbv3.a_overview_ispm_lte_cell_d',
             'fieldtype': '重要场景-小区天',
             'api_type': 'table',
+            'payload_func': get_important_scene_payload,
+            'fields': IMPORTANT_SCENE_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',
@@ -521,7 +388,9 @@ class TableConfig:
             'table_name': 'appdbv3.a_common_cfg_nr_cellant_d',
             'fieldtype': '5G小区工参',
             'api_type': 'table',
+            'payload_func': get_5g_gongcan_payload,
             'is_gongcan': True,
+            'fields': GONGCAN_5G_FIELDS,
             'default_conditions': [
                 {'field': 'curr_flag', 'operator': '=', 'value': '1'},
             ],
@@ -541,10 +410,10 @@ class TableConfig:
             'table_name': 'appdbv3.v_a_common_cfg_lte_cellant_d',
             'fieldtype': '4G小区工参',
             'api_type': 'table',
+            'payload_func': get_4g_gongcan_payload,
             'is_gongcan': True,
-            'default_conditions': [
-                {'field': 'curr_flag', 'operator': '=', 'value': '1'},
-            ],
+            'fields': GONGCAN_4G_FIELDS,
+            'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区，网格，地市，分公司',
                 'timedimension': '天粒度',
@@ -559,14 +428,16 @@ class TableConfig:
         # ========== MR覆盖类 ==========
         '5GMR覆盖-小区天': {
             'name': '5GMR覆盖-小区天',
-            'table_key': '5GMR覆盖-小区天',
+            'table_key': 'appdbv3.a_common_mro_scssrsrp_nr_nrcell',
             'table_name': 'appdbv3.a_common_mro_scssrsrp_nr_nrcell',
             'fieldtype': '5GMR覆盖-小区天',
-            'api_type': 'search',
+            'api_type': 'table',
+            'payload_func': get_5g_mr_payload,
+            'fields': MR_5G_FIELDS,
             'default_conditions': [],
             'dimension': {
-                'geographicdimension': '小区',
-                'timedimension': '天',
+                'geographicdimension': '小区，网格，地市，分公司',
+                'timedimension': '天、周、月粒度',
                 'enodebField': 'gnodeb_id',
                 'cgiField': 'ncgi',
                 'timeField': 'starttime',
@@ -576,14 +447,16 @@ class TableConfig:
         },
         '4GMR覆盖-小区天': {
             'name': '4GMR覆盖-小区天',
-            'table_key': '4GMR覆盖-小区天',
+            'table_key': 'appdbv3.a_common_mro_rsrp_lte_cell',
             'table_name': 'appdbv3.a_common_mro_rsrp_lte_cell',
-            'fieldtype': '4GMR覆盖-小区天',
-            'api_type': 'search',
+            'fieldtype': '4G_MRO_RSRP基础性能_小区',
+            'api_type': 'table',
+            'payload_func': get_4g_mr_payload,
+            'fields': MR_4G_FIELDS,
             'default_conditions': [],
             'dimension': {
-                'geographicdimension': '小区',
-                'timedimension': '天',
+                'geographicdimension': '小区，网格，地市，分公司',
+                'timedimension': '天、周、月',
                 'enodebField': 'enodeb_id',
                 'cgiField': 'cgi',
                 'timeField': 'starttime',
@@ -598,7 +471,9 @@ class TableConfig:
             'table_key': 'VoLTE小区监控预警数据表-天',
             'table_name': 'csem.f_nk_volte_keykpi_cell_d',
             'fieldtype': 'VoLTE小区监控预警数据表-天',
-            'api_type': 'table',  # 使用table接口获取字段配置
+            'api_type': 'table',
+            'payload_func': get_volte_warning_payload,
+            'fields': VOLTE_WARNING_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',
@@ -615,7 +490,9 @@ class TableConfig:
             'table_key': 'VONR小区监控预警数据表-天',
             'table_name': 'csem.f_nk_vonr_keykpi_cell_d',
             'fieldtype': 'VONR小区监控预警数据表-天',
-            'api_type': 'table',  # 使用table接口获取字段配置
+            'api_type': 'table',
+            'payload_func': get_vonr_warning_payload,
+            'fields': VONR_WARNING_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',
@@ -632,12 +509,14 @@ class TableConfig:
             'table_key': 'EPSFB小区监控预警数据表-天',
             'table_name': 'csem.f_nk_epsfb_keykpi_cell_d',
             'fieldtype': 'EPSFB小区监控预警数据表-天',
-            'api_type': 'table',  # 使用table接口获取字段配置
+            'api_type': 'table',
+            'payload_func': get_epsfb_warning_payload,
+            'fields': EPSFB_WARNING_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',
                 'timedimension': '天',
-                'enodebField': '---',  # EPSFB表没有enodeb字段
+                'enodebField': '---',
                 'cgiField': 'cgi',
                 'timeField': 'starttime',
                 'cellField': 'cell',
@@ -652,6 +531,8 @@ class TableConfig:
             'table_name': 'appdbv3.a_common_pm_sacu',
             'fieldtype': 'SA_CU性能',
             'api_type': 'table',
+            'payload_func': get_5g_kpi_payload,
+            'fields': KPI_5G_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',
@@ -667,8 +548,10 @@ class TableConfig:
             'name': '4G小区性能KPI报表',
             'table_key': 'appdbv3.a_common_pm_lte',
             'table_name': 'appdbv3.a_common_pm_lte',
-            'fieldtype': '公共信息（小区级粒度）',
+            'fieldtype': '公共_4G小区性能KPI报表_小区',
             'api_type': 'table',
+            'payload_func': get_4g_kpi_payload,
+            'fields': KPI_4G_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',
@@ -686,13 +569,15 @@ class TableConfig:
             'name': '4G全程完好率报表',
             'table_key': 'appdbv3.a_common_pm_lte',
             'table_name': 'appdbv3.a_common_pm_lte',
-            'fieldtype': '公共信息（小区级粒度）',
+            'fieldtype': '公共_4G小区性能KPI报表_小区',
             'api_type': 'table',
-            'calc_columns': ['4G全程完好率', '4G是否差小区'],
+            'payload_func': get_4g_wanchenglv_payload,
+            'calc_columns': ['4G全程完好率(%)', '4G无线接通率(%)', '4G切换成功率(%)', '4G_E-RAB掉线率(%)', '4G是否差小区'],
+            'fields': KPI_4G_FIELDS,
             'default_conditions': [],
             'dimension': {
-                'geographicdimension': '小区，网格，地市，分公司',
-                'timedimension': '小时,天,周.月,忙时,15分钟',
+                'geographicdimension': '小区',
+                'timedimension': '天',
                 'enodebField': 'enodeb_id',
                 'cgiField': 'cgi',
                 'timeField': 'starttime',
@@ -704,13 +589,15 @@ class TableConfig:
             'name': '5G全程完好率报表',
             'table_key': 'appdbv3.a_common_pm_sacu',
             'table_name': 'appdbv3.a_common_pm_sacu',
-            'fieldtype': 'SA_CU性能',
+            'fieldtype': '公共_5G小区性能KPI报表_小区',
             'api_type': 'table',
-            'calc_columns': ['5G全程完好率', '5G是否差小区'],
+            'payload_func': get_5g_wanchenglv_payload,
+            'calc_columns': ['5G全程完好率(%)', 'SA无线接通率(%)', 'SA切换成功率(%)', 'SA无线掉线率(%)', '5G是否差小区'],
+            'fields': KPI_5G_FIELDS,
             'default_conditions': [],
             'dimension': {
-                'geographicdimension': '小区，网格，地市，分公司',
-                'timedimension': '小时,天,周,月',
+                'geographicdimension': '小区',
+                'timedimension': '天',
                 'enodebField': 'gnodeb_id',
                 'cgiField': 'ncgi',
                 'timeField': 'starttime',
@@ -722,11 +609,14 @@ class TableConfig:
         # ========== 语音小区类 ==========
         '4G语音小区': {
             'name': '4G语音小区',
-            'table_key': 'VoLTE小区监控预警数据表-天',  # 实际会分别查询VoLTE和EPSFB
+            'table_key': 'VoLTE小区监控预警数据表-天',
             'table_name': 'csem.f_nk_volte_keykpi_cell_d',
             'fieldtype': 'VoLTE小区监控预警数据表-天',
-            'api_type': 'table',  # 使用table接口获取字段配置
-            'is_4g_voice': True,  # 标记为4G语音小区，需要VoLTE+EPSFB合并
+            'api_type': 'table',
+            'is_4g_voice': True,
+            'is_4g_voice_warning': True,  # 标记为使用预警报表字段
+            'volte_fields': VOLTE_4G_VOICE_WARNING_FIELDS,
+            'epsfb_fields': EPSFB_4G_VOICE_WARNING_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',
@@ -743,8 +633,10 @@ class TableConfig:
             'table_key': 'VONR小区监控预警数据表-天',
             'table_name': 'csem.f_nk_vonr_keykpi_cell_d',
             'fieldtype': 'VONR小区监控预警数据表-天',
-            'api_type': 'table',  # 使用table接口获取字段配置
+            'api_type': 'table',
+            'payload_func': get_5g_voice_payload,
             'calc_columns': ['5G语音小区'],
+            'fields': VOICE_5G_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区',

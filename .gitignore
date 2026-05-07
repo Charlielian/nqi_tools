@@ -6,6 +6,7 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 *$py.class
+.mypy_cache/
 
 # 虚拟环境
 venv/
@@ -28,6 +29,10 @@ data_output/
 # 授权文件
 license.dat
 
+# 安全配置
+secrets.yaml
+secrets.yaml.example
+
 # 配置文件
 config.yaml
 
@@ -45,14 +50,6 @@ config.yaml
 
 # 旧版目录
 旧版/
-
-# IDE配置
-.trae/
-.idea/
-.vscode/
-
-# 网络数据
-nqi.gmcc.net_20443/
 
 # 系统文件
 .DS_Store
