@@ -6,7 +6,6 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 *$py.class
-.mypy_cache/
 
 # 虚拟环境
 venv/
