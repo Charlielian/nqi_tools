@@ -30,9 +30,9 @@ def get_app_path():
     return os.path.dirname(os.path.dirname(current_file))
 
 
-def load_config():
-    """从 YAML 文件加载配置"""
-    config = {
+def get_default_config():
+    """获取默认配置"""
+    return {
         'auth': {
             'username': 'XXXXX',
             'password': 'XXXX'
@@ -48,13 +48,35 @@ def load_config():
         }
     }
 
+
+def create_default_config(config_path):
+    """创建默认配置文件
+
+    Args:
+        config_path: 配置文件路径
+    """
+    default_config = get_default_config()
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write("# NQI工具配置文件\n")
+            f.write("# 请根据实际情况修改以下内容\n\n")
+            yaml.dump(default_config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        print(f"[INFO] 已创建默认配置文件: {config_path}")
+    except Exception as e:
+        print(f"警告：创建默认配置文件失败: {e}")
+
+
+def load_config():
+    """从 YAML 文件加载配置
+
+    如果 EXE 同目录下没有 config.yaml，会自动创建一个默认配置文件
+    """
+    config = get_default_config()
+
     app_path = get_app_path()
     config_file = os.path.join(app_path, 'config.yaml')
 
-    if not os.path.exists(config_file):
-        base_path = get_base_path()
-        config_file = os.path.join(base_path, 'config.yaml')
-
+    # 优先使用 EXE 同目录的配置文件
     if os.path.exists(config_file):
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
@@ -64,7 +86,21 @@ def load_config():
         except Exception as e:
             print(f"警告：加载配置文件失败 ({config_file}): {e}")
     else:
-        print(f"[INFO] 未找到配置文件 ({config_file})，使用默认配置")
+        # EXE 同目录没有配置文件，尝试读取打包内部的配置
+        base_path = get_base_path()
+        internal_config_file = os.path.join(base_path, 'config.yaml')
+
+        if os.path.exists(internal_config_file):
+            try:
+                with open(internal_config_file, 'r', encoding='utf-8') as f:
+                    yaml_config = yaml.safe_load(f)
+                    if yaml_config:
+                        config.update(yaml_config)
+            except Exception as e:
+                print(f"警告：加载内部配置文件失败: {e}")
+
+        # 在 EXE 同目录创建默认配置文件（方便用户修改）
+        create_default_config(config_file)
 
     return config
 
