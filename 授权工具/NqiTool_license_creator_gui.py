@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 免审批导出工具 - 授权文件生成器 GUI 版本
-用于为用户生成 license.dat 授权文件
+用于为用户生成用户码授权文件
 
-功能：
-- RSA 非对称加密签名，保证授权信息无法伪造
-- AES 加密存储授权时间，避免明文篡改
-- 机器码绑定授权
-- 授权记录管理
+融合方案特点：
+1. 生成用户码（包含过期时间和机器码）
+2. 用户只需提供用户码给用户，无需发送文件
+3. 简化授权流程
 
 使用方法：
-    1. 用户运行 NqiTool_gui.py，获取机器码
+    1. 用户运行 NqiTool.py，获取机器码
     2. 用户将机器码发给管理员
     3. 管理员运行本脚本，输入机器码和授权截止时间
-    4. 管理员将 license.dat 发给用户
+    4. 管理员将生成的用户码复制给用户
 """
 
 import tkinter as tk
@@ -381,62 +380,38 @@ class LicenseCreatorGUI:
         body = tk.Frame(card, bg='white')
         body.pack(fill=tk.X, padx=16, pady=12)
 
-        # 模式选择
-        mode_frame = tk.Frame(body, bg='white')
-        mode_frame.pack(fill=tk.X, pady=(0, 10))
+        # 用户码输出区域
+        output_label_frame = tk.Frame(body, bg='white')
+        output_label_frame.pack(fill=tk.X, pady=(0, 10))
 
-        tk.Label(mode_frame, text="输出模式：",
-                font=('Microsoft YaHei UI', 9, 'bold'),
-                bg='white', fg='#5f6368').pack(side=tk.LEFT)
-
-        self.output_mode_var = tk.StringVar(value="serial")  # 默认序列号模式
-
-        serial_rb = tk.Radiobutton(mode_frame, text="🔑 生成序列号（推荐）",
-                                  variable=self.output_mode_var, value="serial",
-                                  font=('Microsoft YaHei UI', 9),
-                                  bg='white', fg='#202124',
-                                  command=self._on_mode_changed)
-        serial_rb.pack(side=tk.LEFT, padx=(10, 15))
-
-        zip_rb = tk.Radiobutton(mode_frame, text="📦 生成压缩包",
-                                variable=self.output_mode_var, value="zip",
-                                font=('Microsoft YaHei UI', 9),
-                                bg='white', fg='#202124',
-                                command=self._on_mode_changed)
-        zip_rb.pack(side=tk.LEFT)
-
-        # 序列号输出区域（默认隐藏，序列号模式时显示）
-        self.serial_output_frame = tk.Frame(body, bg='white')
-        self.serial_output_frame.pack(fill=tk.X, pady=(0, 10))
-
-        tk.Label(self.serial_output_frame, text="验证序列号：",
+        tk.Label(output_label_frame, text="用户码：",
                 font=('Microsoft YaHei UI', 9, 'bold'),
                 bg='white', fg='#5f6368').pack(anchor='w')
 
-        output_frame = tk.Frame(self.serial_output_frame, bg='#f8f9fa')
+        output_frame = tk.Frame(output_label_frame, bg='#f8f9fa')
         output_frame.pack(fill=tk.X, pady=(5, 0))
 
         self.serial_output = tk.Text(output_frame, height=3, font=('Consolas', 9),
                                    relief='flat', bg='#f8f9fa', wrap=tk.WORD)
         self.serial_output.pack(fill=tk.X, padx=5, pady=5)
-        self.serial_output.insert("1.0", "生成后将显示验证序列号，请复制给用户")
+        self.serial_output.insert("1.0", "生成后将显示用户码，请复制给用户")
         self.serial_output.config(state='disabled', fg='#9ca3af')
 
         # 复制按钮
-        copy_row = tk.Frame(self.serial_output_frame, bg='white')
-        copy_row.pack(fill=tk.X)
+        copy_row = tk.Frame(body, bg='white')
+        copy_row.pack(fill=tk.X, pady=(0, 10))
 
-        tk.Button(copy_row, text="📋 复制序列号",
+        tk.Button(copy_row, text="📋 复制用户码",
                  font=('Microsoft YaHei UI', 9),
-                 bg='#f0f2f5', fg='#202124', bd=1,
-                 cursor='arrow', relief='raised', padx=10, pady=4,
+                 bg='#22c55e', fg='white', bd=1,
+                 cursor='hand2', relief='raised', padx=10, pady=4,
                  command=self._copy_serial_number).pack(side=tk.LEFT)
 
         # 生成按钮
         btn_frame = tk.Frame(body, bg='white')
         btn_frame.pack(fill=tk.X)
 
-        self.generate_btn = tk.Button(btn_frame, text="🔑 生成序列号",
+        self.generate_btn = tk.Button(btn_frame, text="🔑 生成用户码",
                                font=('Microsoft YaHei UI', 11, 'bold'),
                                bg='#165DFF', fg='white', bd=1,
                                cursor='hand2', relief='raised', padx=25, pady=8,
@@ -870,59 +845,38 @@ class LicenseCreatorGUI:
 
         return True, f"授权文件已生成：{os.path.abspath(zip_path)}\n\n压缩包内容：license.dat\n机器码：{machine_code}\n过期时间：{expiry_time_str}\n\n📌 请将 {zip_filename} 发送给用户"
 
-    def _create_serial_number(self, machine_code, expiry_date):
-        """生成验证序列号"""
-        import json
+    def _create_user_code(self, machine_code, expiry_date):
+        """生成用户码（新融合方案）
 
+        用户码格式: Base64(AES加密(过期时间戳|机器码))
+
+        Args:
+            machine_code: 机器码
+            expiry_date: 过期日期
+
+        Returns:
+            tuple: (success, user_code_or_error_message)
+        """
         # 验证机器码
         valid, error = self._validate_machine_code(machine_code)
         if not valid:
             return False, error
 
-        # 加载私钥
-        private_key = self._load_private_key()
-        if not private_key:
-            return False, f"未找到私钥文件 {PRIVATE_KEY_FILE}，请先运行 generate_rsa_keys.py 生成密钥"
+        # 计算过期时间戳
+        # 过期日期设置为当天的 23:59:59
+        expiry_datetime = expiry_date.replace(hour=23, minute=59, second=59)
+        expiry_timestamp = int(expiry_datetime.timestamp())
 
-        # 生成授权时间字符串
-        expiry_time_str = expiry_date.strftime("%Y-%m-%d 23:59:59")
-
-        # 首次运行时间（生成授权时的时间）
-        first_run_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # 构建授权数据
-        version = "1"
-        auth_data = {
-            "v": version,
-            "sn": machine_code,
-            "exp": expiry_time_str,
-            "first": first_run_time_str
-        }
-
-        # JSON 序列化为字符串
-        data_str = json.dumps(auth_data, separators=(',', ':'))
+        # 构建明文数据
+        plaintext = f"{expiry_timestamp}|{machine_code}"
 
         # AES 加密
-        encrypted_data = self._aes_encrypt(data_str, LICENSE_AES_KEY)
-
-        # 对机器码进行 RSA 签名
-        signature = self._rsa_sign(machine_code, private_key)
-
-        # 组装数据：版本(1) + 签名长度(4) + 签名 + 加密数据
-        signature_bytes = signature.encode('utf-8')
-        signature_len_bytes = struct.pack(">I", len(signature_bytes))
-
-        combined = b'\x01' + signature_len_bytes + signature_bytes + encrypted_data
+        encrypted_data = self._aes_encrypt(plaintext, LICENSE_AES_KEY)
 
         # Base64 编码
-        encoded = base64.b64encode(combined).decode('utf-8')
+        user_code = base64.b64encode(encrypted_data).decode('utf-8')
 
-        # 格式化序列号（每8位加一杠）
-        parts = [encoded[i:i+8] for i in range(0, len(encoded), 8)]
-        serial_number = "NQI-" + "-".join(parts)
-
-        # 返回纯序列号（适合显示和复制）
-        return True, serial_number
+        return True, user_code
 
     def _on_generate(self):
         """生成按钮点击事件"""
@@ -956,15 +910,11 @@ class LicenseCreatorGUI:
             return
 
         # 禁用按钮，显示正在生成
-        mode = self.output_mode_var.get()
         self.generate_btn.config(state=tk.DISABLED, text="正在生成...")
         self._update_status("生成中...", '#fbbf24')
 
-        # 根据模式生成
-        if mode == "serial":
-            success, message = self._create_serial_number(machine_code, expiry_date)
-        else:
-            success, message = self._create_license(machine_code, expiry_date)
+        # 生成用户码
+        success, message = self._create_user_code(machine_code, expiry_date)
 
         if success:
             # 添加授权记录
@@ -972,15 +922,12 @@ class LicenseCreatorGUI:
             self._update_status("生成成功", '#22c55e')
             self.key_status_icon.config(text="●", fg='#22c55e')
 
-            # 序列号模式：输出到文本框
-            if mode == "serial":
-                self.serial_output.config(state='normal')
-                self.serial_output.delete("1.0", tk.END)
-                self.serial_output.insert("1.0", message)
-                self.serial_output.config(fg='#202124')
-                messagebox.showinfo("成功", "验证序列号已生成，请在下方复制")
-            else:
-                messagebox.showinfo("成功", message)
+            # 输出用户码到文本框
+            self.serial_output.config(state='normal')
+            self.serial_output.delete("1.0", tk.END)
+            self.serial_output.insert("1.0", message)
+            self.serial_output.config(fg='#202124')
+            messagebox.showinfo("成功", "用户码已生成，请在下方复制发送给用户")
         else:
             self._update_status("生成失败", '#ef4444')
             messagebox.showerror("失败", message)
@@ -1028,14 +975,14 @@ class LicenseCreatorGUI:
                 messagebox.showerror("错误", f"导出失败：{e}")
 
     def _copy_serial_number(self):
-        """复制序列号到剪贴板"""
+        """复制用户码到剪贴板"""
         serial = self.serial_output.get("1.0", tk.END).strip()
-        if serial and serial != "生成后将显示验证序列号，请复制给用户":
+        if serial and serial != "生成后将显示用户码，请复制给用户":
             self.root.clipboard_clear()
             self.root.clipboard_append(serial)
-            messagebox.showinfo("成功", "序列号已复制到剪贴板")
+            messagebox.showinfo("成功", "用户码已复制到剪贴板")
         else:
-            messagebox.showwarning("提示", "没有可复制的序列号")
+            messagebox.showwarning("提示", "没有可复制的用户码")
 
     def _build_read_tab(self):
         """构建读取授权标签页"""

@@ -2,31 +2,27 @@
 """
 免审批导出工具 - 授权文件生成器（GUI版本）
 提供图形界面，方便生成授权文件
+
+融合方案：生成用户码（不再生成 license.dat）
+用户码格式: Base64(AES加密(过期时间戳|机器码))
 """
+
 import os
 import sys
-import json
 import base64
-import struct
-import hashlib
 from datetime import datetime
 
 # 加密依赖
 try:
     from Crypto.Cipher import AES as AES_Cipher
     from Crypto.Util.Padding import pad
-    from Crypto.PublicKey import RSA
-    from Crypto.Hash import SHA256
-    from Crypto.Signature import pkcs1_15
 except ModuleNotFoundError:
     from Cryptodome.Cipher import AES as AES_Cipher
     from Cryptodome.Util.Padding import pad
-    from Cryptodome.PublicKey import RSA
-    from Cryptodome.Hash import SHA256
-    from Cryptodome.Signature import pkcs1_15
 
 # 配置
 PRIVATE_KEY_FILE = "private_key.pem"
+LICENSE_AES_KEY = b"GMCCLicenseV2Key"  # 必须与主程序一致
 LICENSE_RECORD_FILE = "license_records.json"
 
 
@@ -36,7 +32,7 @@ def load_records():
         try:
             with open(LICENSE_RECORD_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError):
             return []
     return []
 
@@ -72,76 +68,80 @@ def add_record(machine_code, note=""):
     save_records(records)
 
 
-def load_private_key():
-    """加载RSA私钥"""
-    if not os.path.exists(PRIVATE_KEY_FILE):
-        return None
-    with open(PRIVATE_KEY_FILE, "rb") as f:
-        return RSA.import_key(f.read())
-
-
-def rsa_sign(data, private_key):
-    """RSA签名"""
-    h = SHA256.new(data.encode("utf-8"))
-    signature = pkcs1_15.new(private_key).sign(h)
-    return base64.b64encode(signature).decode("utf-8")
-
-
-def create_license(machine_code, note=""):
-    """生成授权文件（仅存储机器码）
-
-    新格式：仅包含机器码，无过期日期
-    过期日期在主程序中配置
-    """
+def validate_machine_code(machine_code):
+    """验证机器码格式"""
     machine_code = machine_code.strip()
-
-    # 验证机器码
     if len(machine_code) != 64:
         return False, f"机器码长度应为64位，当前为{len(machine_code)}位"
     try:
         int(machine_code, 16)
+        return True, None
     except ValueError:
         return False, "机器码包含非法字符"
 
-    # 加载私钥（用于签名验证，非必需）
-    private_key = load_private_key()
-    if private_key:
-        # 如果有私钥，进行签名（可选，增强安全性）
-        signature = rsa_sign(machine_code, private_key)
-        # 格式：SN长度(4字节) + SN + "|" + Base64签名
-        sn_bytes = machine_code.encode("utf-8")
-        sn_len = len(sn_bytes)
-        license_data = struct.pack(">I", sn_len) + sn_bytes + b"|" + signature.encode("utf-8")
-    else:
-        # 无私钥，仅存储机器码
-        license_data = machine_code.encode("utf-8")
 
-    with open("license.dat", "wb") as f:
-        f.write(license_data)
+def aes_encrypt(plaintext, key):
+    """AES加密"""
+    import os
+    iv = os.urandom(16)
+    cipher = AES_Cipher.new(key, AES_Cipher.MODE_CBC, iv)
+    padded_data = pad(plaintext.encode("utf-8"), 16)
+    encrypted_data = cipher.encrypt(padded_data)
+    return iv + encrypted_data
+
+
+def create_user_code(machine_code, expiry_date, note=""):
+    """生成用户码（新融合方案）
+
+    用户码格式: Base64(AES加密(过期时间戳|机器码))
+
+    Args:
+        machine_code: 机器码
+        expiry_date: 过期日期
+        note: 备注
+
+    Returns:
+        tuple: (success, user_code_or_error_message)
+    """
+    # 验证机器码
+    valid, error = validate_machine_code(machine_code)
+    if not valid:
+        return False, error
+
+    # 计算过期时间戳
+    expiry_datetime = expiry_date.replace(hour=23, minute=59, second=59)
+    expiry_timestamp = int(expiry_datetime.timestamp())
+
+    # 构建明文数据
+    plaintext = f"{expiry_timestamp}|{machine_code}"
+
+    # AES 加密
+    encrypted_data = aes_encrypt(plaintext, LICENSE_AES_KEY)
+
+    # Base64 编码
+    user_code = base64.b64encode(encrypted_data).decode('utf-8')
 
     # 添加授权记录
     add_record(machine_code, note)
 
-    msg = f"授权文件已生成：{os.path.abspath('license.dat')}\n机器码：{machine_code}"
-    if private_key:
-        msg += "\n（已签名）"
-    return True, msg
+    return True, user_code
 
 
 def main():
     """GUI主函数"""
     import tkinter as tk
     from tkinter import ttk, messagebox
+    import json
 
     root = tk.Tk()
     root.title("授权文件生成器")
-    root.geometry("700x500")
+    root.geometry("700x550")
     root.update_idletasks()
     screen_w = root.winfo_screenwidth()
     screen_h = root.winfo_screenheight()
     x = (screen_w - 700) // 2
-    y = (screen_h - 500) // 2
-    root.geometry(f"700x500+{x}+{y}")
+    y = (screen_h - 550) // 2
+    root.geometry(f"700x550+{x}+{y}")
 
     # 创建Notebook（标签页）
     notebook = ttk.Notebook(root)
@@ -165,11 +165,47 @@ def main():
     note_entry.pack(fill=tk.X, pady=(0, 10))
     ttk.Label(gen_frame, text="（用于标记这台机器的用途，如：张三的电脑）", foreground="gray").pack(anchor=tk.W)
 
-    # 提示信息
-    ttk.Label(gen_frame, text="注意：过期日期在主程序的 EXPIRY_DATE 配置项中设置",
-              foreground="#666666", font=("Microsoft YaHei UI", 9)).pack(pady=(10, 0))
+    # 过期日期输入
+    ttk.Label(gen_frame, text="授权截止日期：").pack(anchor=tk.W, pady=(10, 5))
 
-    # 生成按钮
+    date_frame = tk.Frame(gen_frame)
+    date_frame.pack(fill=tk.X, pady=(0, 10))
+
+    year_var = tk.IntVar(value=datetime.now().year)
+    month_var = tk.IntVar(value=datetime.now().month)
+    day_var = tk.IntVar(value=min(datetime.now().day, 28))
+
+    ttk.Combobox(date_frame, textvariable=year_var, values=list(range(2024, 2031)), width=5, state="readonly").pack(side=tk.LEFT)
+    ttk.Label(date_frame, text="年").pack(side=tk.LEFT, padx=(2, 8))
+    ttk.Combobox(date_frame, textvariable=month_var, values=list(range(1, 13)), width=3, state="readonly").pack(side=tk.LEFT)
+    ttk.Label(date_frame, text="月").pack(side=tk.LEFT, padx=(2, 8))
+    ttk.Combobox(date_frame, textvariable=day_var, values=list(range(1, 32)), width=3, state="readonly").pack(side=tk.LEFT)
+    ttk.Label(date_frame, text="日").pack(side=tk.LEFT, padx=(2, 0))
+
+    # 用户码输出
+    ttk.Label(gen_frame, text="用户码：").pack(anchor=tk.W, pady=(10, 5))
+
+    output_frame = tk.Frame(gen_frame, bg='#f8f9fa')
+    output_frame.pack(fill=tk.X, pady=(0, 10))
+
+    output_text = tk.Text(output_frame, height=3, font=("Courier New", 9), relief='flat', wrap=tk.WORD)
+    output_text.pack(fill=tk.X, padx=5, pady=5)
+    output_text.insert("1.0", "生成后将显示用户码，请复制给用户")
+    output_text.config(state='disabled')
+
+    # 生成按钮和复制按钮
+    btn_frame = ttk.Frame(gen_frame)
+    btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+    def on_copy():
+        text = output_text.get("1.0", tk.END).strip()
+        if text and text != "生成后将显示用户码，请复制给用户":
+            root.clipboard_clear()
+            root.clipboard_append(text)
+            messagebox.showinfo("成功", "用户码已复制到剪贴板")
+        else:
+            messagebox.showwarning("提示", "没有可复制的用户码")
+
     def on_generate():
         machine_code = machine_entry.get().strip()
         if not machine_code:
@@ -177,21 +213,26 @@ def main():
             return
 
         note = note_entry.get().strip()
-        success, msg = create_license(machine_code, note)
+
+        try:
+            expiry_date = datetime(year_var.get(), month_var.get(), day_var.get())
+        except ValueError:
+            messagebox.showerror("错误", "日期无效")
+            return
+
+        success, result = create_user_code(machine_code, expiry_date, note)
         if success:
-            messagebox.showinfo("成功", msg)
-            # 清空输入框
-            machine_entry.delete(0, tk.END)
-            note_entry.delete(0, tk.END)
-            # 刷新记录列表
+            output_text.config(state='normal')
+            output_text.delete("1.0", tk.END)
+            output_text.insert("1.0", result)
+            output_text.config(state='disabled')
+            messagebox.showinfo("成功", "用户码已生成，请复制给用户")
             refresh_records()
         else:
-            messagebox.showerror("失败", msg)
+            messagebox.showerror("失败", result)
 
-    btn_frame = ttk.Frame(gen_frame)
-    btn_frame.pack(fill=tk.X, pady=(20, 0))
-
-    ttk.Button(btn_frame, text="生成授权文件", command=on_generate).pack(side=tk.LEFT, padx=5)
+    ttk.Button(btn_frame, text="生成用户码", command=on_generate).pack(side=tk.LEFT, padx=5)
+    ttk.Button(btn_frame, text="复制用户码", command=on_copy).pack(side=tk.LEFT, padx=5)
 
     # ========== 标签页2：授权记录 ==========
     records_frame = ttk.Frame(notebook, padding="15")
@@ -201,7 +242,7 @@ def main():
 
     # 创建Treeview显示记录
     columns = ("machine_code", "note", "count", "last_time")
-    tree = ttk.Treeview(records_frame, columns=columns, show="headings", height=15)
+    tree = ttk.Treeview(records_frame, columns=columns, show="headings", height=12)
 
     tree.heading("machine_code", text="机器码")
     tree.heading("note", text="备注")
@@ -222,10 +263,8 @@ def main():
 
     def refresh_records():
         """刷新授权记录列表"""
-        # 清空现有内容
         for item in tree.get_children():
             tree.delete(item)
-
         records = load_records()
         for record in records:
             tree.insert("", tk.END, values=(
@@ -272,7 +311,6 @@ def main():
     bottom_frame = ttk.Frame(root, padding="10")
     bottom_frame.pack(fill=tk.X)
 
-    # 统计信息
     records = load_records()
     ttk.Label(bottom_frame, text=f"共 {len(records)} 条授权记录", foreground="#666666").pack(side=tk.LEFT)
     ttk.Button(bottom_frame, text="退出", command=root.destroy).pack(side=tk.RIGHT)

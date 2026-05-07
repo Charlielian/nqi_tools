@@ -22,6 +22,11 @@ class LoginDialog:
         self.result = False
         self.msg_code = None
 
+        # 确保 session 禁用 SSL 验证
+        self.sess.verify = False
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("登录验证")
         self.dialog.geometry("400x480")
@@ -159,7 +164,27 @@ class LoginDialog:
     def _fetch_captcha(self):
         """获取图形验证码"""
         try:
-            captcha_res = self.sess.get(CAPTCHA_URL)
+            # 测试网络连接
+            test_res = self.sess.get('https://nqi.gmcc.net:20443', timeout=10)
+            if test_res.status_code >= 400:
+                self.status_var.set(f"服务器返回错误: {test_res.status_code}")
+                self.captcha_msg.config(text=f"连接失败 ({test_res.status_code})", foreground="red")
+                return
+        except Exception as e:
+            error_msg = str(e)
+            if "CERTIFICATE" in error_msg.upper() or "SSL" in error_msg.upper():
+                self.status_var.set("SSL证书错误，正在尝试绕过...")
+                self.sess.verify = False
+            elif "timeout" in error_msg.lower():
+                self.status_var.set("连接超时，请检查网络")
+                self.captcha_msg.config(text="连接超时，请检查网络或稍后重试", foreground="red")
+            else:
+                self.status_var.set(f"网络错误: {error_msg}")
+                self.captcha_msg.config(text=f"网络错误: {error_msg}", foreground="red")
+            return
+
+        try:
+            captcha_res = self.sess.get(CAPTCHA_URL, timeout=15)
             if captcha_res.status_code == 200:
                 from PIL import Image, ImageTk
                 from io import BytesIO
@@ -179,9 +204,11 @@ class LoginDialog:
                 self.sms_msg.config(text="请先验证图形验证码")
                 self.captcha_entry.focus()
             else:
-                self.status_var.set("获取验证码失败")
+                self.status_var.set(f"获取验证码失败 ({captcha_res.status_code})")
+                self.captcha_msg.config(text=f"获取失败 ({captcha_res.status_code})", foreground="red")
         except Exception as e:
             self.status_var.set(f"获取验证码失败: {e}")
+            self.captcha_msg.config(text=f"错误: {e}", foreground="red")
 
     def _send_sms(self):
         """发送短信验证码"""

@@ -8,6 +8,11 @@ import os
 import sys
 import yaml
 
+# ========== 全局 SSL 配置 ==========
+# 企业内部系统可能使用自签名证书，禁用 SSL 警告
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 
 def get_base_path():
     """获取程序运行的基础路径（兼容 PyInstaller 打包）"""
@@ -97,3 +102,6 @@ HEADERS_JSON = {
 
 EXPIRY_DATE = "2026-06-30"
 LICENSE_FILE = "license.dat"
+
+# 配置目录（与app_path相同，用于存放secrets.yaml等配置文件）
+CONFIG_DIR = get_app_path()

@@ -6,6 +6,7 @@
 
 import requests
 import json
+import logging
 
 from lxml import etree
 
@@ -13,8 +14,11 @@ from utils.config import (
     DEFAULT_USERNAME, DEFAULT_PASSWORD, BASE_URL,
     LOGIN_URL, CAPTCHA_URL, GET_CONFIG_URL, SEND_CODE_URL, HEADERS, HEADERS_JSON
 )
+from utils.constants import TIMEOUT_SHORT, RETRY_TIMES
 from utils.crypto import rsa_encrypt
-from utils.helpers import save_cookie, load_cookie, captcha_handle
+from utils.helpers import save_cookie, load_cookie, captcha_handle, delete_cookie
+
+logger = logging.getLogger(__name__)
 
 
 class LoginManager:
@@ -25,6 +29,11 @@ class LoginManager:
         self.password = password or DEFAULT_PASSWORD
         self.parent = parent
         self.sess = requests.Session()
+        # 配置 SSL 验证（企业内部系统可能使用自签名证书）
+        self.sess.verify = False  # 禁用 SSL 证书验证
+        # 禁用 urllib3 的 SSL 警告
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     def _update_login_ui(self, **kwargs):
         """批量更新登录UI状态"""
@@ -48,8 +57,18 @@ class LoginManager:
         elif key == 'log':
             self.parent.log(value[0], value[1])
 
-    def login(self, try_times=3):
-        """执行登录"""
+    def login(self, try_times=None):
+        """执行登录
+
+        Args:
+            try_times: 登录尝试次数（默认使用常量）
+
+        Returns:
+            bool: 登录是否成功
+        """
+        if try_times is None:
+            try_times = RETRY_TIMES
+
         print("=" * 60)
         print("开始登录大数据平台...")
         print(f"账号: {self.username}")
@@ -62,8 +81,13 @@ class LoginManager:
                 print("✓ 使用保存的Cookie登录成功！")
                 return True
             else:
-                print("⚠ 保存的Cookie已失效，重新登录...")
+                print("⚠ 保存的Cookie已失效，自动清除并重新登录...")
+                delete_cookie(self.username)
                 self.sess = requests.Session()
+                # 配置 SSL 验证（企业内部系统可能使用自签名证书）
+                self.sess.verify = False
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         for i in range(try_times):
             if self._login_once(i):
@@ -80,11 +104,11 @@ class LoginManager:
         """检查session是否有效"""
         try:
             url = f'{BASE_URL}/pro-wfm-biz-server/cas/login/info'
-            res = self.sess.get(url, headers=HEADERS, timeout=10)
+            res = self.sess.get(url, headers=HEADERS, timeout=TIMEOUT_SHORT)
             if res.status_code == 200:
                 data = json.loads(res.text)
                 return data.get('data', {}).get('loginId') == self.username
-        except:
+        except (json.JSONDecodeError, requests.RequestException, KeyError):
             pass
         return False
 

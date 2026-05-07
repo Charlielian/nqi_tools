@@ -28,6 +28,10 @@ data_output/
 # 授权文件
 license.dat
 
+# 安全配置
+secrets.yaml
+secrets.yaml.example
+
 # 配置文件
 config.yaml
 

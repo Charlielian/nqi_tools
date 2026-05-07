@@ -5,27 +5,171 @@
 """
 
 import os
-import pickle
+import json
+import http.cookiejar
 
 from utils.config import COOKIE_DIR, CAPTCHA_DIR, HEADERS
 from utils.logger import ensure_dirs
 
 
-def save_cookie(cookie, username):
-    """保存cookie到文件"""
+class HttpCookieEncoder:
+    """Cookie序列化编码器 - 使用JSON替代pickle（更安全）"""
+
+    @staticmethod
+    def encode(cookie_jar):
+        """将CookieJar编码为可存储的JSON格式
+
+        Args:
+            cookie_jar: http.cookiejar.CookieJar 对象
+
+        Returns:
+            str: JSON格式的Cookie字符串
+        """
+        cookies = []
+        for cookie in cookie_jar:
+            cookie_dict = {
+                'name': cookie.name,
+                'value': cookie.value,
+                'domain': cookie.domain,
+                'path': cookie.path,
+                'secure': cookie.secure,
+                'expires': cookie.expires if hasattr(cookie, 'expires') else None,
+            }
+            cookies.append(cookie_dict)
+        return json.dumps(cookies, ensure_ascii=False)
+
+    @staticmethod
+    def decode(json_str, cookie_jar=None):
+        """从JSON字符串解码为CookieJar
+
+        Args:
+            json_str: JSON格式的Cookie字符串
+            cookie_jar: 可选的现有CookieJar对象
+
+        Returns:
+            requests.cookies.RequestsCookieJar: 解码后的CookieJar对象（支持get方法）
+        """
+        from requests.cookies import RequestsCookieJar
+        if cookie_jar is None:
+            cookie_jar = RequestsCookieJar()
+
+        try:
+            cookies_data = json.loads(json_str)
+            for cookie_dict in cookies_data:
+                cookie = http.cookiejar.Cookie(
+                    version=0,
+                    name=cookie_dict.get('name', ''),
+                    value=cookie_dict.get('value', ''),
+                    port=None,
+                    port_specified=False,
+                    domain=cookie_dict.get('domain', ''),
+                    domain_specified=bool(cookie_dict.get('domain')),
+                    domain_initial_dot=False,
+                    path=cookie_dict.get('path', '/'),
+                    path_specified=bool(cookie_dict.get('path')),
+                    secure=cookie_dict.get('secure', False),
+                    expires=cookie_dict.get('expires'),
+                    discard=True,
+                    comment=None,
+                    comment_url=None,
+                    rest={},
+                    rfc2109=False
+                )
+                cookie_jar.set_cookie(cookie)
+        except (json.JSONDecodeError, KeyError) as e:
+            # 旧版本pickle格式的cookie无法解析，返回空的CookieJar
+            pass
+
+        return cookie_jar
+
+
+def save_cookie(cookie_jar, username):
+    """保存cookie到文件（JSON格式，更安全）
+
+    Args:
+        cookie_jar: http.cookiejar.CookieJar 对象
+        username: 用户名（用于文件名）
+    """
     ensure_dirs()
-    filepath = os.path.join(COOKIE_DIR, f'{username}.pkl')
-    with open(filepath, 'wb') as f:
-        pickle.dump(cookie, f)
+    filepath = os.path.join(COOKIE_DIR, f'{username}.json')
+
+    # 同时保留旧版本兼容性（.pkl文件会被覆盖）
+    old_filepath = os.path.join(COOKIE_DIR, f'{username}.pkl')
+    if os.path.exists(old_filepath):
+        try:
+            os.remove(old_filepath)
+        except OSError:
+            pass
+
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(HttpCookieEncoder.encode(cookie_jar))
 
 
 def load_cookie(username):
-    """从文件加载cookie"""
-    filepath = os.path.join(COOKIE_DIR, f'{username}.pkl')
-    if os.path.exists(filepath):
-        with open(filepath, 'rb') as f:
-            return pickle.load(f)
+    """从文件加载cookie（支持JSON和旧版pickle格式）
+
+    Args:
+        username: 用户名
+
+    Returns:
+        requests.cookies.RequestsCookieJar: CookieJar对象，失败返回None
+    """
+    # 先尝试新格式 JSON
+    json_filepath = os.path.join(COOKIE_DIR, f'{username}.json')
+    if os.path.exists(json_filepath):
+        try:
+            with open(json_filepath, 'r', encoding='utf-8') as f:
+                json_str = f.read()
+            return HttpCookieEncoder.decode(json_str)
+        except Exception:
+            return None
+
+    # 兼容旧格式 pickle
+    pkl_filepath = os.path.join(COOKIE_DIR, f'{username}.pkl')
+    if os.path.exists(pkl_filepath):
+        try:
+            import pickle
+            from requests.cookies import RequestsCookieJar
+            with open(pkl_filepath, 'rb') as f:
+                cookie_jar = pickle.load(f)
+            # 转换为 RequestsCookieJar（支持 get 方法）
+            if not isinstance(cookie_jar, RequestsCookieJar):
+                new_jar = RequestsCookieJar()
+                for cookie in cookie_jar:
+                    new_jar.set_cookie(cookie)
+                cookie_jar = new_jar
+            # 迁移到新格式
+            save_cookie(cookie_jar, username)
+            return cookie_jar
+        except Exception:
+            return None
+
     return None
+
+
+def delete_cookie(username):
+    """删除保存的cookie文件
+
+    Args:
+        username: 用户名
+    """
+    # 删除 JSON 格式的cookie
+    json_filepath = os.path.join(COOKIE_DIR, f'{username}.json')
+    if os.path.exists(json_filepath):
+        try:
+            os.remove(json_filepath)
+            logger.info(f"已删除过期的Cookie文件: {json_filepath}")
+        except OSError as e:
+            logger.warning(f"删除Cookie文件失败: {e}")
+
+    # 删除旧版 pickle 格式的cookie
+    pkl_filepath = os.path.join(COOKIE_DIR, f'{username}.pkl')
+    if os.path.exists(pkl_filepath):
+        try:
+            os.remove(pkl_filepath)
+            logger.info(f"已删除过期的Cookie文件: {pkl_filepath}")
+        except OSError as e:
+            logger.warning(f"删除Cookie文件失败: {e}")
 
 
 def captcha_handle(img_content, attempt=1):
