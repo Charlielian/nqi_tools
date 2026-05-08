@@ -62,10 +62,6 @@ jobs:
         # 复制 config.yaml（打包前已创建）
         Copy-Item "config.yaml" "release/NqiTool/"
 
-        # 复制授权工具公钥
-        New-Item -Path "release/NqiTool/授权工具" -ItemType Directory -Force
-        Copy-Item "授权工具/public_key.pem" "release/NqiTool/授权工具/"
-
         # 创建必要的运行时目录
         New-Item -Path "release/NqiTool/data_output" -ItemType Directory -Force
         New-Item -Path "release/NqiTool/cookies" -ItemType Directory -Force
