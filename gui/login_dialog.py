@@ -8,6 +8,9 @@ import tkinter as tk
 from tkinter import ttk
 import json
 
+# 确保 PIL 和 tkinter 相关模块被打包
+from PIL import Image, ImageTk
+
 from utils.config import LOGIN_URL, CAPTCHA_URL, GET_CONFIG_URL, SEND_CODE_URL, HEADERS, HEADERS_JSON
 from utils.crypto import rsa_encrypt
 
@@ -156,32 +159,26 @@ class LoginDialog:
                     self.captcha_entry.select_clear()
                     self.captcha_entry.focus()
             else:
-                self.status_var.set("验证请求失败")
+                self.status_var.set(f"验证请求失败 ({res.status_code})")
+                self.captcha_msg.config(text=f"请求失败 ({res.status_code})", foreground="red")
         except Exception as e:
-            self.status_var.set(f"验证失败: {e}")
-            self.captcha_msg.config(text=f"错误: {e}", foreground="red")
+            error_msg = str(e)
+            if "CERTIFICATE" in error_msg.upper() or "SSL" in error_msg.upper() or "SSLError" in error_msg:
+                self.sess.verify = False
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                self.status_var.set("SSL证书问题，已尝试绕过，请重试")
+                self.captcha_msg.config(text="SSL错误已处理，请点击【刷新】重新获取验证码", foreground="orange")
+            else:
+                self.status_var.set(f"验证失败: {error_msg}")
+                self.captcha_msg.config(text=f"错误: {error_msg}", foreground="red")
 
     def _fetch_captcha(self):
         """获取图形验证码"""
-        try:
-            # 测试网络连接
-            test_res = self.sess.get('https://nqi.gmcc.net:20443', timeout=10)
-            if test_res.status_code >= 400:
-                self.status_var.set(f"服务器返回错误: {test_res.status_code}")
-                self.captcha_msg.config(text=f"连接失败 ({test_res.status_code})", foreground="red")
-                return
-        except Exception as e:
-            error_msg = str(e)
-            if "CERTIFICATE" in error_msg.upper() or "SSL" in error_msg.upper():
-                self.status_var.set("SSL证书错误，正在尝试绕过...")
-                self.sess.verify = False
-            elif "timeout" in error_msg.lower():
-                self.status_var.set("连接超时，请检查网络")
-                self.captcha_msg.config(text="连接超时，请检查网络或稍后重试", foreground="red")
-            else:
-                self.status_var.set(f"网络错误: {error_msg}")
-                self.captcha_msg.config(text=f"网络错误: {error_msg}", foreground="red")
-            return
+        # 首先确保 SSL 验证被禁用（可能在exe环境中需要）
+        if not self.sess.verify:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         try:
             captcha_res = self.sess.get(CAPTCHA_URL, timeout=15)
@@ -207,8 +204,41 @@ class LoginDialog:
                 self.status_var.set(f"获取验证码失败 ({captcha_res.status_code})")
                 self.captcha_msg.config(text=f"获取失败 ({captcha_res.status_code})", foreground="red")
         except Exception as e:
-            self.status_var.set(f"获取验证码失败: {e}")
-            self.captcha_msg.config(text=f"错误: {e}", foreground="red")
+            error_msg = str(e)
+            # 尝试重新禁用 SSL 验证并重试
+            if "CERTIFICATE" in error_msg.upper() or "SSL" in error_msg.upper() or "SSLError" in error_msg:
+                self.sess.verify = False
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                try:
+                    captcha_res = self.sess.get(CAPTCHA_URL, timeout=15)
+                    if captcha_res.status_code == 200:
+                        from PIL import Image, ImageTk
+                        from io import BytesIO
+
+                        bytes_stream = BytesIO(captcha_res.content)
+                        img = Image.open(bytes_stream)
+                        img = img.resize((200, 80), Image.Resampling.LANCZOS)
+                        self.captcha_photo = ImageTk.PhotoImage(img)
+                        self.captcha_label.config(image=self.captcha_photo)
+
+                        self.captcha_img_data = captcha_res.content
+                        self.captcha_var.set('')
+                        self.captcha_entry.config(state=tk.NORMAL)
+                        self.send_sms_btn.config(state=tk.DISABLED)
+                        self.status_var.set("请输入图形验证码，点击【验证图形码】")
+                        self.captcha_msg.config(text="请输入图片中的验证码")
+                        self.sms_msg.config(text="请先验证图形验证码")
+                        self.captcha_entry.focus()
+                        return
+                except Exception:
+                    pass
+            if "timeout" in error_msg.lower():
+                self.status_var.set("连接超时，请检查网络")
+                self.captcha_msg.config(text="连接超时，请检查网络或稍后重试", foreground="red")
+            else:
+                self.status_var.set(f"获取验证码失败: {error_msg}")
+                self.captcha_msg.config(text=f"错误: {error_msg}", foreground="red")
 
     def _send_sms(self):
         """发送短信验证码"""
