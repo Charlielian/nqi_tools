@@ -18,17 +18,29 @@ a = Analysis(
         ('config.yaml', '.'),
     ],
     hiddenimports=[
+        # 项目内部模块 - utils
         'utils.config',
         'utils.logger',
         'utils.crypto',
         'utils.helpers',
+        'utils.constants',
+        'utils.excel_styler',
+        'utils.retry',
+        # 项目内部模块 - core
         'core.license',
         'core.auth',
         'core.query',
         'core.export',
+        # 项目内部模块 - gui
         'gui.widgets',
         'gui.login_dialog',
         'gui.main_window',
+        'gui.components',
+        'gui.field_configs',
+        'gui.payload_templates',
+        'gui.theme',
+        'gui.first_run',
+        # 第三方库
         'requests',
         'pandas',
         'openpyxl',
@@ -38,6 +50,8 @@ a = Analysis(
         'pytesseract',
         'Crypto',
         'Cryptodome',
+        'wmi',
+        'urllib3',
     ],
     hookspath=[],
     hooksconfig={},
