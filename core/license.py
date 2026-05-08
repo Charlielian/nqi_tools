@@ -15,6 +15,7 @@ import hashlib
 import platform
 import subprocess
 import os
+import sys
 import struct
 import base64
 import threading
@@ -33,6 +34,38 @@ USER_CODE_FILE = "user_code.dat"  # 用户码文件
 
 # 日志器
 logger = logging.getLogger(__name__)
+
+
+def _get_app_dir():
+    """获取应用程序目录（兼容 PyInstaller 打包）"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _get_user_data_dir():
+    """获取用户数据目录（存储用户码和配置）"""
+    if platform.system() == "Windows":
+        # Windows: 使用 AppData/Local 目录
+        base = os.environ.get('LOCALAPPDATA', os.path.expanduser('~\\AppData\\Local'))
+        app_dir = os.path.join(base, 'NqiTool')
+    elif platform.system() == "Darwin":
+        # macOS: 使用 ~/Library/Application Support 目录
+        base = os.path.expanduser('~/Library/Application Support')
+        app_dir = os.path.join(base, 'NqiTool')
+    else:
+        # Linux: 使用 ~/.config 目录
+        base = os.path.expanduser('~/.config')
+        app_dir = os.path.join(base, 'NqiTool')
+
+    # 确保目录存在
+    try:
+        os.makedirs(app_dir, exist_ok=True)
+    except Exception:
+        # 如果失败，回退到程序目录
+        app_dir = _get_app_dir()
+
+    return app_dir
 
 
 def _load_aes_key():
@@ -186,7 +219,17 @@ def generate_machine_code(hw_info):
 
 def get_public_key():
     """获取公钥文件内容"""
-    public_key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '授权工具', 'public_key.pem')
+    # 优先从用户数据目录加载（exe环境）
+    user_dir = _get_user_data_dir()
+    public_key_path = os.path.join(user_dir, '授权工具', 'public_key.pem')
+    if os.path.exists(public_key_path):
+        with open(public_key_path, 'r') as f:
+            content = f.read()
+            return content.replace('-----BEGIN PUBLIC KEY-----', '').replace('-----END PUBLIC KEY-----', '').replace('\n', '')
+
+    # 回退到程序目录（源码环境）
+    app_dir = _get_app_dir()
+    public_key_path = os.path.join(app_dir, '授权工具', 'public_key.pem')
     if not os.path.exists(public_key_path):
         return None
     with open(public_key_path, 'r') as f:
@@ -196,7 +239,14 @@ def get_public_key():
 
 def load_public_key():
     """加载RSA公钥对象"""
-    public_key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '授权工具', 'public_key.pem')
+    # 优先从用户数据目录加载（exe环境）
+    user_dir = _get_user_data_dir()
+    public_key_path = os.path.join(user_dir, '授权工具', 'public_key.pem')
+    if not os.path.exists(public_key_path):
+        # 回退到程序目录（源码环境）
+        app_dir = _get_app_dir()
+        public_key_path = os.path.join(app_dir, '授权工具', 'public_key.pem')
+
     if not os.path.exists(public_key_path):
         return None
     try:
@@ -301,7 +351,11 @@ def write_license_from_serial(serial_info):
         tuple: (success, message)
     """
     try:
-        license_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', LICENSE_FILE)
+        # exe环境下使用用户目录，源码环境下使用程序目录
+        if getattr(sys, 'frozen', False):
+            license_file = os.path.join(_get_user_data_dir(), LICENSE_FILE)
+        else:
+            license_file = os.path.join(_get_app_dir(), LICENSE_FILE)
 
         # 构建 license 数据
         sn = serial_info["machine_code"]
@@ -327,7 +381,7 @@ def write_license_from_serial(serial_info):
         encoded_encrypted = base64.b64encode(encrypted_data).decode('utf-8')
 
         # 对机器码进行签名
-        public_key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '授权工具', 'public_key.pem')
+        public_key_path = os.path.join(_get_app_dir(), '授权工具', 'public_key.pem')
         if os.path.exists(public_key_path):
             try:
                 from Crypto.PublicKey import RSA
@@ -360,7 +414,7 @@ def write_license_from_serial(serial_info):
 
 def load_license():
     """加载本地license文件"""
-    license_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', LICENSE_FILE)
+    license_path = os.path.join(_get_app_dir(), LICENSE_FILE)
     if not os.path.exists(license_path):
         return None
     try:
@@ -374,7 +428,11 @@ def verify_license(machine_code):
     """验证授权 - 返回(True, None)表示有效，(False, 错误信息)表示无效"""
     import os
 
-    license_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', LICENSE_FILE)
+    # exe环境下使用用户目录，源码环境下使用程序目录
+    if getattr(sys, 'frozen', False):
+        license_file = os.path.join(_get_user_data_dir(), LICENSE_FILE)
+    else:
+        license_file = os.path.join(_get_app_dir(), LICENSE_FILE)
 
     if not os.path.exists(license_file):
         return False, "未找到授权文件"
@@ -431,7 +489,11 @@ def get_effective_expiry():
         datetime: 有效的过期日期时间对象
     """
     license_expiry = None
-    license_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', LICENSE_FILE)
+    # exe环境下使用用户目录，源码环境下使用程序目录
+    if getattr(sys, 'frozen', False):
+        license_file = os.path.join(_get_user_data_dir(), LICENSE_FILE)
+    else:
+        license_file = os.path.join(_get_app_dir(), LICENSE_FILE)
 
     if os.path.exists(license_file):
         try:
@@ -460,7 +522,11 @@ def invalidate_license():
     将license.dat文件写入过期的授权代码
     这会使下次启动时授权验证失败
     """
-    license_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', LICENSE_FILE)
+    # exe环境下使用用户目录，源码环境下使用程序目录
+    if getattr(sys, 'frozen', False):
+        license_file = os.path.join(_get_user_data_dir(), LICENSE_FILE)
+    else:
+        license_file = os.path.join(_get_app_dir(), LICENSE_FILE)
     try:
         # 写入一个过期的授权数据
         # 格式: 4字节长度 + 序列号 + 签名 | 加密数据
@@ -558,8 +624,14 @@ class TimeMonitor:
 # ============================================================================
 
 def get_user_code_path():
-    """获取用户码文件路径"""
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', USER_CODE_FILE)
+    """获取用户码文件路径（兼容 PyInstaller 打包）
+    
+    优先使用用户数据目录存储，exe环境下确保可写
+    """
+    # exe环境下使用用户目录，源码环境下使用程序目录
+    if getattr(sys, 'frozen', False):
+        return os.path.join(_get_user_data_dir(), USER_CODE_FILE)
+    return os.path.join(_get_app_dir(), USER_CODE_FILE)
 
 
 def save_user_code(user_code):
