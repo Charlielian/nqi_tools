@@ -1085,7 +1085,68 @@ def get_5g_mr_payload(start_date=None, end_date=None, city=None):
     }
 
 
-# ==================== 4G MR覆盖 ====================
+# ==================== 45G流量与热点评估物理站级 ====================
+def get_flow_hot_spot_station_payload(start_date=None, end_date=None, city=None):
+    """45G流量与热点评估物理站级报表payload
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)，按日查询时为单日
+        end_date: 结束日期 (YYYY-MM-DD)，按日查询时与start_date相同
+        city: 地市名称
+    """
+    fields = [
+        ('starttime', '开始时间'), ('endtime', '结束时间'), ('city', '地市'),
+        ('station_name', '物理站名称'), ('station_id', '物理站ID'), ('cover_type', '覆盖类型'),
+        ('gnodeb_count', '5G逻辑站数量'), ('enodeb_count', '4G逻辑站数量'),
+        ('nr_cell_count', '5G小区数量'), ('lte_cell_count', '4G小区数量'),
+        ('lte_e_site_list', 'E频站点名列表'), ('lte_d_site_list', 'D频站点名列表'),
+        ('lte_f_site_list', 'F频站点名列表'), ('lte_fdd1800_site_list', 'FDD1800站点名列表'),
+        ('lte_fdd900_site_list', 'FDD900站点名列表'), ('lte_reverse_site_list', '反向4G站点名列表'),
+        ('other_lte_site_list', '其它4G站点列表'), ('nr_2600_site_list', '2.6G站点名列表'),
+        ('nr_700_site_list', '700M站点名列表'), ('nr_4900_site_list', '4.9G站点名列表'),
+        ('other_nr_site_list', '其它5G站点列表'),
+        ('flow_bh_lte_upoctudl', '流量忙时4G流量'), ('flow_bh_nr_upoctudl', '流量忙时5G流量'),
+        ('flow_bh_total_upoctudl', '流量忙时45G总流量'), ('flow_bh_nr_upoctudl_rate', '流量忙时5G流量占比'),
+        ('flow_bh_lte_connmean', '流量忙时4G RRC连接平均数'), ('flow_bh_lte_connmax', '流量忙时4G RRC连接最大数'),
+        ('flow_bh_nr_connmean', '流量忙时5G RRC连接平均数'), ('flow_bh_nr_connmax', '流量忙时5G RRC连接最大数'),
+        ('flow_bh_lte_use_rate', '流量忙时4G利用率'), ('lte_hot_level', '流量忙时4G热点等级'),
+        ('lte_upoctudl', '4G日流量'), ('nr_upoctudl', '5G日流量'),
+        ('total_upoctudl', '45G日总流量'), ('nr_upoctudl_rate', '5G日流量占比'),
+    ]
+    # 前3个字段(starttime, endtime, city)的datatype应为'1'，与浏览器请求一致
+    fixed_fields = {'starttime', 'endtime', 'city'}
+    result_list = _build_result_fields(fields, '45G流量与热点评估物理站级', 'appdbv3.a_cap_ltenr_station', fixed_fields)
+
+    # 默认日期
+    if start_date is None:
+        start_date = '2026-05-07'
+    if end_date is None:
+        end_date = '2026-05-07'
+    if city is None:
+        city = '阳江'
+
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': '小区',
+        'timedimension': '天、周',
+        'enodebField': 'gnodeb_id',
+        'cgiField': 'cgi',
+        'timeField': 'starttime',
+        'cellField': 'cell',
+        'cityField': 'city',
+        'columns': _build_columns_param([f[0] for f in fields]),
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': '1'}, 'columnname': ''},
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 0
+    }
+
+
 def get_4g_mr_payload(start_date=None, end_date=None, city=None):
     """4G MR覆盖报表payload
 

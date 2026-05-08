@@ -7,9 +7,12 @@
 import os
 import json
 import http.cookiejar
+import logging
 
 from utils.config import COOKIE_DIR, CAPTCHA_DIR, HEADERS
 from utils.logger import ensure_dirs
+
+logger = logging.getLogger(__name__)
 
 
 class HttpCookieEncoder:

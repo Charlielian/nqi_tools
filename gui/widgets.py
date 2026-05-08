@@ -19,6 +19,7 @@ from gui.field_configs import (
     VOLTE_WARNING_FIELDS, VONR_WARNING_FIELDS, EPSFB_WARNING_FIELDS,
     KPI_4G_FIELDS, KPI_5G_FIELDS,
     VOICE_5G_FIELDS,
+    FLOW_HOT_SPOT_STATION_FIELDS,
 )
 
 # 导入硬编码Payload模板
@@ -31,6 +32,7 @@ from gui.payload_templates import (
     get_5g_gongcan_payload, get_4g_gongcan_payload,
     get_5g_kpi_payload, get_4g_kpi_payload,
     get_5g_mr_payload, get_4g_mr_payload,
+    get_flow_hot_spot_station_payload,
 )
 
 
@@ -641,6 +643,27 @@ class TableConfig:
             'dimension': {
                 'geographicdimension': '小区',
                 'timedimension': '天',
+                'enodebField': 'gnodeb_id',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'cell',
+                'cityField': 'city',
+            }
+        },
+
+        # ========== 45G流量与热点评估类 ==========
+        '45G流量与热点评估物理站级': {
+            'name': '45G流量与热点评估物理站级',
+            'table_key': '45G流量与热点评估物理站级',
+            'table_name': 'appdbv3.a_cap_ltenr_station',
+            'fieldtype': '45G流量与热点评估物理站级',
+            'api_type': 'table',
+            'payload_func': get_flow_hot_spot_station_payload,
+            'fields': FLOW_HOT_SPOT_STATION_FIELDS,
+            'default_conditions': [],
+            'dimension': {
+                'geographicdimension': '小区',
+                'timedimension': '天、周',
                 'enodebField': 'gnodeb_id',
                 'cgiField': 'cgi',
                 'timeField': 'starttime',

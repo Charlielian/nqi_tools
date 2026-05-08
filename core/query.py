@@ -31,6 +31,38 @@ from utils.retry import RetryError
 logger = logging.getLogger(__name__)
 
 
+def get_cookie_value(cookie_jar, name, domain=None):
+    """安全获取cookie值，处理多个同名cookie的情况
+
+    Args:
+        cookie_jar: requests的CookieJar对象
+        name: cookie名称
+        domain: 可选的domain过滤
+
+    Returns:
+        cookie值，如果不存在则返回None
+    """
+    try:
+        # 先尝试直接获取
+        if domain:
+            value = cookie_jar.get(name, domain=domain)
+            if value:
+                return value
+        # 尝试不带domain获取
+        return cookie_jar.get(name)
+    except requests.cookies.CookieConflictError:
+        # 存在多个同名cookie，手动遍历获取第一个
+        cookies = [c for c in cookie_jar if c.name == name]
+        if cookies:
+            # 如果指定了domain，优先返回匹配domain的
+            if domain:
+                for c in cookies:
+                    if c.domain == domain or (domain in c.domain):
+                        return c.value
+            return cookies[0].value
+        return None
+
+
 def convert_where_conditions(conditions):
     """转换where条件格式为API要求的格式
 
@@ -112,9 +144,9 @@ class JXCXQuery:
         import random
         try:
             # 首先检查 CASTGC cookie 是否存在
-            castgc = self.sess.cookies.get('CASTGC', domain='nqi.gmcc.net')
+            castgc = get_cookie_value(self.sess.cookies, 'CASTGC', domain='nqi.gmcc.net')
             if not castgc:
-                castgc = self.sess.cookies.get('CASTGC')
+                castgc = get_cookie_value(self.sess.cookies, 'CASTGC')
 
             if not castgc:
                 logger.warning("[Session检测] 未找到CASTGC cookie")
@@ -622,9 +654,9 @@ class JXCXQuery:
                 logger.info("重试第 %d 次...", attempt)
 
             try:
-                castgc = self.sess.cookies.get('CASTGC', domain='nqi.gmcc.net')
+                castgc = get_cookie_value(self.sess.cookies, 'CASTGC', domain='nqi.gmcc.net')
                 if not castgc:
-                    castgc = self.sess.cookies.get('CASTGC')
+                    castgc = get_cookie_value(self.sess.cookies, 'CASTGC')
 
                 if not castgc:
                     logger.error("未找到CASTGC cookie")
@@ -670,14 +702,22 @@ class JXCXQuery:
         logger.error("进入即席查询失败，已尝试 %d 次", retry_times)
         return False
 
-    def get_table_count(self, payload, retry_times=None, retry_delay=None):
+    def get_table_count(self, payload, retry_times=None, retry_delay=None, report_name=None):
         """获取查询结果行数
 
         Args:
             payload: 请求参数
             retry_times: 重试次数（默认使用常量）
             retry_delay: 重试间隔（默认使用常量）
+            report_name: 报表名称（用于日志标识，传入时使用report_logger）
         """
+        # 如果提供了report_name，使用report_logger；否则使用模块级logger
+        if report_name:
+            log = get_report_logger(report_name)
+        else:
+            log = logger
+            report_name = "QueryModule"
+
         if retry_times is None:
             retry_times = RETRY_TIMES
         if retry_delay is None:
@@ -693,82 +733,140 @@ class JXCXQuery:
         payload_count = {key: value for key, value in payload.items() if key in key_list}
         payload_encoded = self._encode_payload(payload_count)
 
-        logger.info("查询总数 URL: %s", JXCX_COUNT_URL)
-        logger.info("查询参数 (前500字符): %s...", payload_encoded[:500] if len(payload_encoded) >= 500 else payload_encoded)
+        # ========== 详细调试日志 ==========
+        log.info("")
+        log.info("╔══════════════════════════════════════════════════════════════════════════════╗")
+        log.info("║ [get_table_count] 获取数据总数 [%s]                                      ║", report_name)
+        log.info("╠══════════════════════════════════════════════════════════════════════════════╣")
+        log.info("║ 请求URL: %s", JXCX_COUNT_URL)
+        log.info("║")
+        
+        # Session/Cookie状态诊断
+        log.info("║ [Session状态诊断]")
+        castgc = get_cookie_value(self.sess.cookies, 'CASTGC', domain='nqi.gmcc.net')
+        if not castgc:
+            castgc = get_cookie_value(self.sess.cookies, 'CASTGC')
+        if castgc:
+            log.info("║   CASTGC cookie: 存在 (长度=%d)", len(castgc))
+        else:
+            log.info("║   CASTGC cookie: 不存在!")
+        
+        jsessionid = get_cookie_value(self.sess.cookies, 'JSESSIONID', domain='nqi.gmcc.net')
+        if not jsessionid:
+            jsessionid = get_cookie_value(self.sess.cookies, 'JSESSIONID')
+        if jsessionid:
+            log.info("║   JSESSIONID cookie: 存在")
+        else:
+            log.info("║   JSESSIONID cookie: 不存在")
+        
+        # 请求头信息
+        log.info("║")
+        log.info("║ [请求Headers]")
+        for key in ['User-Agent', 'Content-Type', 'Cookie']:
+            if key == 'Cookie':
+                cookie_str = '; '.join([f"{c.name}={c.value[:20]}..." if len(c.value) > 20 else f"{c.name}={c.value}" 
+                                       for c in self.sess.cookies])
+                log.info("║   %s: %s", key, cookie_str[:200])
+            elif key in HEADERS:
+                log.info("║   %s: %s", key, HEADERS[key])
+        log.info("║")
+        log.info("║ [筛选后的payload参数]")
+        for k, v in payload_count.items():
+            if k == 'result':
+                log.info("║   %s: (JSON, 长度=%d字符)", k, len(json.dumps(v)))
+            elif k == 'where':
+                log.info("║   %s: %s", k, json.dumps(v)[:200])
+            elif k == 'columns':
+                log.info("║   %s: (列表, %d项)", k, len(v) if isinstance(v, list) else 0)
+            else:
+                log.info("║   %s: %s", k, v)
+        log.info("║")
+        log.info("║ [编码后的请求体] (长度=%d字符)", len(payload_encoded))
+        log.info("║ %s", payload_encoded[:300])
+        if len(payload_encoded) > 300:
+            log.info("║ ... (省略 %d 字符)", len(payload_encoded) - 300)
+        log.info("╚══════════════════════════════════════════════════════════════════════════════╝")
+        log.info("")
 
         for attempt in range(retry_times):
             try:
+                log.info("[尝试 %d/%d] 发送getTableCount请求...", attempt + 1, retry_times)
                 res = self.sess.post(JXCX_COUNT_URL, data=payload_encoded, headers=HEADERS, timeout=TIMEOUT_EXTRA_LONG)
-                logger.info("响应状态码: %s", res.status_code)
+                
+                # ========== 详细响应日志 ==========
+                log.info("")
+                log.info("┌──────────────────────────────────────────────────────────────────────────────┐")
+                log.info("│ [get_table_count] 响应信息                                                   │")
+                log.info("├──────────────────────────────────────────────────────────────────────────────┤")
+                log.info("│ HTTP状态码: %s", res.status_code)
+                log.info("│ 响应头 Content-Type: %s", res.headers.get('Content-Type', 'N/A'))
+                log.info("│ 响应内容长度: %d 字节", len(res.content))
+                log.info("│ 响应内容: %s", res.text[:1000])
+                if len(res.text) > 1000:
+                    log.info("│           ... (省略 %d 字符)", len(res.text) - 1000)
+                log.info("└──────────────────────────────────────────────────────────────────────────────┘")
+                log.info("")
 
-                if res.status_code == 200:
-                    if not res.content or len(res.content.strip()) == 0:
-                        logger.error("响应内容为空，可能是Session过期")
-                        self.enabled = False
-                        # Session过期，尝试重新进入
-                        if attempt < retry_times - 1:
-                            logger.info("尝试重新进入即席查询模块 (%d/%d)...", attempt + 2, retry_times)
-                            time.sleep(retry_delay)
-                            if self.enter_jxcx():
-                                continue
-                        return 0
+                if res.status_code != 200:
+                    log.error("│ HTTP状态码异常: %s", res.status_code)
+                    log.error("└────────────────────────────────────────────────────────────────────┘")
+                    self.enabled = False
+                    return 0
 
-                    try:
-                        result = json.loads(res.content)
-                    except json.JSONDecodeError as e:
-                        logger.error("JSON解析失败: %s", e)
-                        logger.info("响应内容 (前500字符): %s...", res.text[:500] if len(res.text) >= 500 else res.text)
-                        self.enabled = False
-                        if attempt < retry_times - 1:
-                            logger.info("尝试重新进入即席查询模块 (%d/%d)...", attempt + 2, retry_times)
-                            time.sleep(retry_delay)
-                            if self.enter_jxcx():
-                                continue
-                        return 0
-
-                    logger.info("响应内容: %s", result)
-
-                    # 打印完整的响应内容用于调试
-                    logger.info("API响应内容: %s", str(result)[:500] if len(str(result)) > 500 else str(result))
-
-                    # 检查是否有错误消息
-                    if 'message' in result and result['message']:
-                        msg = str(result['message'])
-                        logger.warning("服务器返回消息: %s", msg)
-                        # 检查常见的错误消息
-                        if any(err in msg for err in ['不存在', '失败', '错误', 'error', 'Error', '异常', 'timeout', 'Timeout']):
-                            logger.warning("API返回错误，返回0")
-                            return 0
-
-                    # 检查响应结构中的count字段
-                    # 注意：count=0 是有效数据，不应该触发错误
-                    count = self._extract_count_from_response(result)
-                    if count is not None:
-                        logger.info("查询到的数据行数(count): %s", count)
-                        # 额外调试：打印响应中的其他字段
-                        if 'message' not in result or not result['message']:
-                            logger.info("【成功】API响应正常，count=%s", count)
-                        return int(count) if count != '' else 0
-
-                    # 如果没有找到count字段，记录详细错误并重试
-                    logger.warning("API响应中未找到count字段，可能是查询失败")
-                    logger.warning("尝试次数: %d/%d", attempt + 1, retry_times)
-                    # 记录更多调试信息
-                    logger.warning("【调试】API响应完整内容: %s", str(result)[:1000])
-                    logger.warning("【调试】响应中的所有key: %s", list(result.keys()) if isinstance(result, dict) else '非字典对象')
-
-                    # 当响应为空时，记录编码后的请求参数用于调试
-                    if not result:
-                        logger.warning("【调试】响应为空，记录编码后的请求参数:")
-                        logger.warning("【调试】URL: %s", JXCX_COUNT_URL)
-                        encoded_params = self._encode_payload(payload_count)
-                        logger.warning("【调试】编码后参数(前500字符): %s...", encoded_params[:500] if len(encoded_params) >= 500 else encoded_params)
-                        logger.warning("【调试】HTTP状态码: %s", res.status_code)
-                        logger.warning("【调试】响应headers: %s", dict(res.headers) if hasattr(res, 'headers') else 'N/A')
-                    
+                if not res.content or len(res.content.strip()) == 0:
+                    log.error("│ 响应内容为空，可能是Session过期")
+                    log.error("└────────────────────────────────────────────────────────────────────┘")
+                    self.enabled = False
+                    # Session过期，尝试重新进入
                     if attempt < retry_times - 1:
+                        log.info("尝试重新进入即席查询模块 (%d/%d)...", attempt + 2, retry_times)
                         time.sleep(retry_delay)
-                        continue
+                        if self.enter_jxcx():
+                            continue
+                    return 0
+
+                try:
+                    result = json.loads(res.content)
+                except json.JSONDecodeError as e:
+                    log.error("│ JSON解析失败: %s", e)
+                    log.error("│ 响应内容: %s", res.text[:500])
+                    log.error("└────────────────────────────────────────────────────────────────────┘")
+                    self.enabled = False
+                    if attempt < retry_times - 1:
+                        log.info("尝试重新进入即席查询模块 (%d/%d)...", attempt + 2, retry_times)
+                        time.sleep(retry_delay)
+                        if self.enter_jxcx():
+                            continue
+                    return 0
+
+                # 检查是否有错误消息
+                if 'message' in result and result['message']:
+                    msg = str(result['message'])
+                    log.warning("│ 服务器消息: %s", msg)
+                    # 检查常见的错误消息
+                    if any(err in msg for err in ['不存在', '失败', '错误', 'error', 'Error', '异常', 'timeout', 'Timeout']):
+                        log.warning("│ API返回错误，返回0")
+                        log.warning("└────────────────────────────────────────────────────────────────────┘")
+                        return 0
+
+                # 检查响应结构中的count字段
+                # 注意：count=0 是有效数据，不应该触发错误
+                count = self._extract_count_from_response(result)
+                if count is not None:
+                    log.info("│ ✓ 成功提取count: %s", count)
+                    log.info("│ 响应完整内容: %s", str(result)[:500])
+                    log.info("└────────────────────────────────────────────────────────────────────┘")
+                    return int(count) if count != '' else 0
+
+                # 如果没有找到count字段，记录详细错误
+                log.warning("│ ✗ 未能在响应中找到count字段")
+                log.warning("│ 响应keys: %s", list(result.keys()) if isinstance(result, dict) else type(result))
+                log.warning("│ 响应完整内容: %s", str(result)[:1000])
+                log.warning("└────────────────────────────────────────────────────────────────────┘")
+                
+                if attempt < retry_times - 1:
+                    time.sleep(retry_delay)
+                    continue
 
                     return 0
                 else:
@@ -896,63 +994,60 @@ class JXCXQuery:
                 out_list.append(quote(key) + '=' + quote(str(payload[key]) if payload[key] is not None else ''))
         return '&'.join(out_list)
 
-    def _fetch_data(self, payload, timeout=None):
+    def _fetch_data(self, payload, timeout=None, report_name=None):
         """发送请求获取数据（从API获取单页数据）
 
         Args:
             payload: 请求参数
             timeout: 超时时间（秒）
+            report_name: 报表名称（用于日志标识）
 
         Returns:
             list: 数据列表，失败返回空列表
         """
+        # 如果提供了report_name，使用report_logger；否则使用模块级logger
+        if report_name:
+            log = get_report_logger(report_name)
+        else:
+            log = logger
+
         if timeout is None:
             timeout = getattr(self, '_current_batch_timeout', 300)
 
         # ========== 详细日志记录（用于排查问题） ==========
         logger.info("")
         logger.info("┌──────────────────────────────────────────────────────────────────┐")
-        logger.info("│ [DEBUG] 发送数据请求                                              │")
+        logger.info("│ [_fetch_data] 发送数据请求                                        │")
         logger.info("├──────────────────────────────────────────────────────────────────┤")
         logger.info("│ 请求URL: %s", JXCX_URL)
         logger.info("│ 请求方法: POST")
         logger.info("│ 超时时间: %ds", timeout)
 
-        # 记录原始payload（用于调试）
-        logger.info("│                                                              │")
-        logger.info("│ [原始Payload]                                                  │")
-        for key, value in payload.items():
-            if key == 'result':
-                logger.info("│   result: (包含%d个表配置)", len(value.get('result', [])))
-                for i, item in enumerate(value.get('result', [])[:3]):
-                    logger.info("│     表[%d]: table=%s, fields=%s",
-                               i, item.get('table', ''), item.get('feildName', ''))
-                if len(value.get('result', [])) > 3:
-                    logger.info("│     ... 还有%d个表配置", len(value.get('result', [])) - 3)
-            elif key == 'where':
-                logger.info("│   where: %s", value)
-            elif key in ['geographicdimension', 'timedimension']:
-                logger.info("│   %s: %s", key, value)
-            else:
-                val_str = str(value)[:50] + '...' if len(str(value)) > 50 else str(value)
-                logger.info("│   %s: %s", key, val_str)
-        logger.info("└──────────────────────────────────────────────────────────────────┘")
-
         # 编码payload
         payload_encoded = self._encode_payload(payload)
-        logger.info("[DEBUG] 编码后Payload长度: %d 字符", len(payload_encoded))
+        logger.info("│ 编码后Payload长度: %d 字符", len(payload_encoded))
+
+        # 显示关键参数
+        logger.info("│ [关键参数]")
+        for key in ['start', 'length', 'geographicdimension', 'timedimension']:
+            if key in payload:
+                logger.info("│   %s: %s", key, payload[key])
+        logger.info("└──────────────────────────────────────────────────────────────────┘")
 
         try:
             res = self.sess.post(JXCX_URL, data=payload_encoded, headers=HEADERS, timeout=timeout)
 
+            # ========== 详细响应日志 ==========
             logger.info("")
             logger.info("┌──────────────────────────────────────────────────────────────────┐")
-            logger.info("│ [DEBUG] 响应信息                                                │")
+            logger.info("│ [_fetch_data] 响应信息                                           │")
             logger.info("├──────────────────────────────────────────────────────────────────┤")
             logger.info("│ HTTP状态码: %s", res.status_code)
+            logger.info("│ 响应头 Content-Type: %s", res.headers.get('Content-Type', 'N/A'))
+            logger.info("│ 响应内容长度: %d 字节", len(res.content))
 
             if res.status_code != 200:
-                logger.error("│ 响应内容: %s", res.text[:200])
+                logger.error("│ 响应内容: %s", res.text[:500])
                 logger.error("└──────────────────────────────────────────────────────────────────┘")
                 self.enabled = False
                 return []
@@ -967,10 +1062,16 @@ class JXCXQuery:
                 result = json.loads(res.content)
             except json.JSONDecodeError as e:
                 logger.error("│ JSON解析失败: %s", e)
-                logger.error("│ 响应内容: %s", res.text[:300])
+                logger.error("│ 响应内容: %s", res.text[:500])
                 logger.error("└──────────────────────────────────────────────────────────────────┘")
                 self.enabled = False
                 return []
+
+            # 打印完整响应内容用于调试
+            logger.info("│ 响应keys: %s", list(result.keys()) if isinstance(result, dict) else type(result))
+            logger.info("│ 响应内容 (前500字符): %s", str(result)[:500])
+            if len(str(result)) > 500:
+                logger.info("│                  ... (省略 %d 字符)", len(str(result)) - 500)
 
             # 检查是否有错误消息
             if 'message' in result and result['message']:
@@ -980,8 +1081,16 @@ class JXCXQuery:
                     logger.warning("└──────────────────────────────────────────────────────────────────┘")
                     return []
 
-            # 获取数据列表
+            # 获取数据列表 - 支持多种响应格式
             data_list = result.get('data') or []
+            if not data_list and isinstance(result, dict):
+                # 尝试其他可能的数据字段
+                for key in ['result', 'records', 'rows', 'dataList']:
+                    if key in result and result[key]:
+                        data_list = result[key] if isinstance(result[key], list) else []
+                        logger.info("│ 使用备用字段 '%s' 获取到 %d 条数据", key, len(data_list))
+                        break
+
             logger.info("│ 返回数据条数: %d", len(data_list))
 
             if not data_list:
@@ -994,24 +1103,22 @@ class JXCXQuery:
             return data_list
 
         except requests.exceptions.Timeout:
-            logger.error("")
-            logger.error("╔══════════════════════════════════════════════════════════════════╗")
-            logger.error("║ [ERROR] 请求超时 (timeout=%ds)                                      ║", timeout)
-            logger.error("╚══════════════════════════════════════════════════════════════════╝")
+            log.error("")
+            log.error("╔══════════════════════════════════════════════════════════════════╗")
+            log.error("║ [ERROR] 请求超时 (timeout=%ds)                                      ║", timeout)
+            log.error("╚══════════════════════════════════════════════════════════════════╝")
             return []
         except requests.exceptions.ConnectionError as e:
-            logger.error("")
-            logger.error("╔══════════════════════════════════════════════════════════════════╗")
-            conn_err = str(e)[:50]
-            logger.error("║ [ERROR] 连接错误: %s", conn_err)
-            logger.error("╚══════════════════════════════════════════════════════════════════╝")
+            log.error("")
+            log.error("╔══════════════════════════════════════════════════════════════════╗")
+            log.error("║ [ERROR] 连接错误: %s", str(e)[:50])
+            log.error("╚══════════════════════════════════════════════════════════════════╝")
             return []
         except Exception as e:
-            logger.error("")
-            logger.error("╔══════════════════════════════════════════════════════════════════╗")
-            exc_err = str(e)[:50]
-            logger.error("║ [ERROR] 请求异常: %s", exc_err)
-            logger.error("╚══════════════════════════════════════════════════════════════════╝")
+            log.error("")
+            log.error("╔══════════════════════════════════════════════════════════════════╗")
+            log.error("║ [ERROR] 请求异常: %s", str(e)[:50])
+            log.error("╚══════════════════════════════════════════════════════════════════╝")
             import traceback
             traceback.print_exc()
             return []
@@ -1201,7 +1308,7 @@ class JXCXQuery:
 
         report_logger.debug("获取数据总数...")
 
-        total_count = self.get_table_count(count_payload)
+        total_count = self.get_table_count(count_payload, report_name=report_name)
         report_logger.info("预期数据行数: %d", total_count)
 
         if progress_callback:
