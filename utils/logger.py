@@ -107,7 +107,9 @@ class ReportLogger:
     def _get_date_dir(self):
         """获取当日志目录，不存在则创建"""
         today = datetime.now().strftime('%Y-%m-%d')
-        date_dir = os.path.join(self.log_dir, today)
+        # 如果 log_dir 未初始化，使用临时目录
+        base_dir = self.log_dir if self.log_dir else os.path.join(os.path.expanduser('~'), '.nqi_logs')
+        date_dir = os.path.join(base_dir, today)
         if not os.path.exists(date_dir):
             os.makedirs(date_dir, exist_ok=True)
         return date_dir

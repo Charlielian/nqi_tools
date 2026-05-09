@@ -64,7 +64,7 @@ class LoginManager:
             try_times: 登录尝试次数（默认使用常量）
 
         Returns:
-            bool: 登录是否成功
+            requests.Session: 登录成功后的会话对象，失败返回 None
         """
         if try_times is None:
             try_times = RETRY_TIMES
@@ -79,7 +79,7 @@ class LoginManager:
             self.sess.cookies = saved_cookie
             if self._check_session():
                 print("✓ 使用保存的Cookie登录成功！")
-                return True
+                return self.sess
             else:
                 print("⚠ 保存的Cookie已失效，自动清除并重新登录...")
                 delete_cookie(self.username)
@@ -93,12 +93,12 @@ class LoginManager:
             if self._login_once(i):
                 print(f"✓ 登录成功！（尝试次数: {i+1}）")
                 save_cookie(self.sess.cookies, self.username)
-                return True
+                return self.sess
             else:
                 print(f"⚠ 登录失败，尝试次数: {i+1}/{try_times}")
 
         print("✗ 登录失败，已达到最大尝试次数")
-        return False
+        return None
 
     def _check_session(self):
         """检查session是否有效"""
@@ -106,9 +106,17 @@ class LoginManager:
             url = f'{BASE_URL}/pro-wfm-biz-server/cas/login/info'
             res = self.sess.get(url, headers=HEADERS, timeout=TIMEOUT_SHORT)
             if res.status_code == 200:
-                data = json.loads(res.text)
-                return data.get('data', {}).get('loginId') == self.username
-        except (json.JSONDecodeError, requests.RequestException, KeyError):
+                try:
+                    data = json.loads(res.text)
+                except (json.JSONDecodeError, ValueError):
+                    return False
+                if not isinstance(data, dict):
+                    return False
+                data_part = data.get('data')
+                if not isinstance(data_part, dict):
+                    return False
+                return data_part.get('loginId') == self.username
+        except (requests.RequestException, KeyError, TypeError, AttributeError, ValueError):
             pass
         return False
 

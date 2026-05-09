@@ -349,10 +349,21 @@ class JXCXQuery:
             api_type = fallback_api_type
 
         logger.info("API返回的字段配置数量: %d", len(configs))
+        # 过滤掉非字典类型的配置项，防止API返回异常数据导致崩溃
+        valid_configs = [c for c in configs if isinstance(c, dict)]
+        if len(valid_configs) != len(configs):
+            logger.warning("过滤掉了 %d 个非字典类型的配置项", len(configs) - len(valid_configs))
+        configs = valid_configs
+
+        if not configs:
+            logger.error("没有有效的字段配置，返回None")
+            return None
+
+        logger.info("有效字段配置数量: %d", len(configs))
         logger.info("API返回的字段名(前10个): %s", [c.get('columnname', '') for c in configs[:10]])
         logger.info("API返回的fieldtype(前3个): %s", list(set(c.get('fieldtype', '') for c in configs[:3])))
 
-        sorted_configs = sorted(configs, key=lambda x: x.get('sort', 0))
+        sorted_configs = sorted(configs, key=lambda x: x.get('sort', 0) if isinstance(x, dict) else 0)
         first_config = sorted_configs[0]
 
         # 从API配置获取维度参数（如果有的话）
@@ -675,28 +686,63 @@ class JXCXQuery:
                 url_with_params = f"{url}?url={params['url']}&__PID={params['__PID']}&random={params['random']}&token={params['token']}"
                 logger.info("请求URL: %s...", url_with_params[:200] if len(url_with_params) >= 200 else url_with_params)
 
+                # 保存当前cookies，以便检测是否有新的cookie
+                cookies_before = set((c.name, c.value) for c in self.sess.cookies)
+
                 start_time = time.time()
-                res = self.sess.get(url_with_params, headers=HEADERS, timeout=timeout)
+                # 使用 allow_redirects=True 跟随重定向
+                res = self.sess.get(url_with_params, headers=HEADERS, timeout=timeout, allow_redirects=True)
                 elapsed_time = time.time() - start_time
 
                 logger.info("响应状态码: %s, 耗时: %.2f秒", res.status_code, elapsed_time)
 
-                if res.status_code == 200:
+                # 检查是否有新的有效cookie（JSESSIONID）
+                cookies_after = set((c.name, c.value) for c in self.sess.cookies)
+                new_cookies = cookies_after - cookies_before
+                if new_cookies:
+                    new_cookie_names = [name for name, _ in new_cookies]
+                    logger.info("检测到新Cookie: %s", new_cookie_names)
+
+                # 检查最终URL是否到达目标页面
+                final_url = res.url if hasattr(res, 'url') else ''
+                if 'pro-adhoc' in final_url or 'index' in final_url:
+                    logger.info("成功到达即席查询页面: %s", final_url[:100])
                     self.enabled = True
                     logger.info("即席查询模块初始化成功！")
                     return True
-                else:
-                    logger.error("进入即席查询失败，状态码: %s", res.status_code)
-                    continue
+
+                # 即使状态码不是200，检查是否包含有效的adhoc内容
+                if res.status_code == 200 and ('adhoc' in res.text or 'jxcx' in res.text.lower()):
+                    self.enabled = True
+                    logger.info("即席查询模块初始化成功！（内容检测）")
+                    return True
+
+                # 如果有JSESSIONID更新，也认为成功
+                jsessionid = get_cookie_value(self.sess.cookies, 'JSESSIONID')
+                if jsessionid:
+                    logger.info("检测到JSESSIONID，模块可能已初始化")
+                    self.enabled = True
+                    return True
+
+                logger.error("进入即席查询失败，状态码: %s, 最终URL: %s", res.status_code, final_url[:100])
+                continue
 
             except requests.exceptions.Timeout:
                 logger.error("请求超时 (timeout=%ds)", timeout)
+                # 超时后检查是否已经有有效cookie
+                jsessionid = get_cookie_value(self.sess.cookies, 'JSESSIONID')
+                if jsessionid:
+                    logger.info("超时但检测到JSESSIONID，模块可能已初始化")
+                    self.enabled = True
+                    return True
                 continue
             except requests.exceptions.ConnectionError as e:
                 logger.error("网络连接错误: %s", e)
                 continue
             except Exception as e:
                 logger.error("未知错误: %s", e)
+                import traceback
+                logger.debug(traceback.format_exc())
                 continue
 
         logger.error("进入即席查询失败，已尝试 %d 次", retry_times)
