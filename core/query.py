@@ -1732,3 +1732,261 @@ class JXCXQuery:
         logger.info("╚══════════════════════════════════════════════════════════════════╝")
 
         return results
+
+
+class ClusterOrderQuery:
+    """聚类工单查询类"""
+
+    def __init__(self, session):
+        self.sess = session
+        from utils.config import (
+            GET_GRID_URL, GET_PROBLEM_LABEL_URL, QUERY_PROPOSAL_URL
+        )
+        self.grid_url = GET_GRID_URL
+        self.label_url = GET_PROBLEM_LABEL_URL
+        self.query_url = QUERY_PROPOSAL_URL
+
+        # 聚类工单API专用headers（参考浏览器请求）
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Origin': 'https://nqi.gmcc.net:20443',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': 'https://nqi.gmcc.net:20443/pro-ltemr-cicd/modules/ltescheme/unify/disquery/showgis.jsp?firstQuery=1',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'cors',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br'
+        }
+
+    def get_grids(self, city_code):
+        """获取责任网格列表
+
+        Args:
+            city_code: 地市编码（如 860662）
+
+        Returns:
+            list: 网格列表 [{'id': '责任网格-阳江阳西县', 'text': '责任网格-阳江阳西县'}, ...]
+        """
+        try:
+            data = {'city': city_code}
+            res = self.sess.post(self.grid_url, data=data, headers=self.headers, timeout=30)
+
+            if res.status_code == 200:
+                result = json.loads(res.content)
+                if result.get('code') == 1:
+                    grids = json.loads(result.get('obj', '[]'))
+                    logger.info("[聚类工单] 获取到 %d 个责任网格", len(grids))
+                    return grids
+                else:
+                    logger.warning("[聚类工单] 获取网格失败: %s", result.get('msg', '未知错误'))
+            else:
+                logger.warning("[聚类工单] 获取网格HTTP错误: %d", res.status_code)
+        except Exception as e:
+            logger.error("[聚类工单] 获取网格异常: %s", str(e))
+
+        return []
+
+    def get_problem_labels(self, start_date, end_date, typeid=1):
+        """获取问题标签列表
+
+        Args:
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            typeid: 问题类型ID（默认1）
+
+        Returns:
+            list: 问题标签列表 [{'id': 'xxx', 'text': 'xxx'}, ...]
+        """
+        try:
+            data = {
+                'typeid': typeid,
+                'starttime': start_date,
+                'endtime': end_date
+            }
+            res = self.sess.post(self.label_url, data=data, headers=self.headers, timeout=30)
+
+            if res.status_code == 200:
+                result = json.loads(res.content)
+                if isinstance(result, list):
+                    logger.info("[聚类工单] 获取到 %d 个问题标签", len(result))
+                    return result
+                else:
+                    logger.warning("[聚类工单] 问题标签返回格式异常")
+            else:
+                logger.warning("[聚类工单] 获取问题标签HTTP错误: %d", res.status_code)
+        except Exception as e:
+            logger.error("[聚类工单] 获取问题标签异常: %s", str(e))
+
+        return []
+
+    def query_orders(self, params, progress_callback=None):
+        """查询聚类工单
+
+        Args:
+            params: 查询参数字典
+                - timeType: 时间类型（问题生成时间/派发时间/确认时间）
+                - start_date: 开始日期 (YYYY-MM-DD)
+                - end_date: 结束日期 (YYYY-MM-DD)
+                - city: 地市编码（如 860662）
+                - area_grid: 责任网格（可选，多个用逗号分隔）
+                - detailed_type: 详细问题类型列表（可选）
+                - problem_status: 工单状态（可选）
+                - page: 页码（默认1）
+                - rows: 每页行数（默认100）
+            progress_callback: 进度回调函数 callback(current, total, message)
+
+        Returns:
+            dict: {
+                'rows': 数据行列表,
+                'total': 总行数,
+                'page': 当前页,
+                'total_pages': 总页数,
+                'columns': 列定义
+            }
+        """
+        try:
+            # 构建请求数据
+            post_data = {
+                'firstQuery': '',
+                'timeType': params.get('timeType', '问题生成时间'),
+                'start_date': params.get('start_date', ''),
+                'end_date': params.get('end_date', ''),
+                'city': params.get('city', ''),
+                'area_grid': params.get('area_grid', ''),
+                'order_code': '',
+                'problemSource': '',
+                'question_type': '',
+                'problem_status': params.get('problem_status', ''),
+                'cover_scene': '',
+                'special_label': '',
+                'value_label': '',
+                'vcfirst_submitter': '',
+                'vcdetail_submitter': '',
+                'vcevaluator': '',
+                'vcdetail_cause': '',
+                'vcdetail_measures': '',
+                'handover': '',
+                'intevaluate_type': '',
+                'search_uuid': '',
+                'alllikequery': '',
+                'vcimport': '',
+                'vcdatatype': '',
+                'intproposal_company': '',
+                'isquery': 'ture',
+                'ordercheck': '',
+                'ischeck': '',
+                'isDuplicateRemoval': 'false',
+                'intisprovince': '',
+                'vccellviplevel': '',
+                'query_type': 'null',
+                'query_detail_type': '',
+                'intisupscale': '',
+                'vcupscale_code': '',
+                'vcbilling_plbtype': '',
+                'vcnetwork_type': '',
+                'intorderanaly_record': '',
+                'vcdataroot': '',
+                'iscs': '',
+                'intis_warranty': '',
+                'vcorder_type': '',
+                'isspecial': 'false',
+                'rows': params.get('rows', 100),
+                'pagination[pageSize]': params.get('rows', 100),
+                'pagination[page]': params.get('page', 1),
+            }
+
+            # 添加详细问题类型
+            detailed_types = params.get('detailed_type', [])
+            if detailed_types:
+                for dt in detailed_types:
+                    post_data.setdefault('detailed_type[]', []).append(dt)
+                # 如果detailed_type[]不存在，需要特殊处理
+                if 'detailed_type[]' not in post_data:
+                    for i, dt in enumerate(detailed_types):
+                        post_data[f'detailed_type[{i}]'] = dt
+
+            if progress_callback:
+                progress_callback(0, 0, "正在查询聚类工单...")
+
+            # 发送请求
+            res = self.sess.post(self.query_url, data=post_data, headers=self.headers, timeout=60)
+
+            if res.status_code == 200:
+                result = json.loads(res.content)
+
+                # 解析响应
+                message = result.get('message', {})
+                if message.get('success'):
+                    rows = result.get('rows', [])
+                    pagination = result.get('pagination', {})
+                    columns = result.get('columns', [])
+
+                    total = pagination.get('totalCount', 0)
+                    total_pages = pagination.get('totalPage', 1)
+                    current_page = pagination.get('currentPage', 1)
+
+                    if progress_callback:
+                        progress_callback(len(rows), total, f"获取到 {len(rows)} 条数据，共 {total} 条")
+
+                    logger.info("[聚类工单] 查询成功: %d/%d 条", len(rows), total)
+
+                    return {
+                        'rows': rows,
+                        'total': total,
+                        'page': current_page,
+                        'total_pages': total_pages,
+                        'columns': columns
+                    }
+                else:
+                    error_msg = message.get('message', '未知错误')
+                    logger.error("[聚类工单] 查询失败: %s", error_msg)
+                    if progress_callback:
+                        progress_callback(0, 0, f"查询失败: {error_msg}")
+            else:
+                logger.error("[聚类工单] HTTP错误: %d", res.status_code)
+                if progress_callback:
+                    progress_callback(0, 0, f"HTTP错误: {res.status_code}")
+
+        except Exception as e:
+            logger.error("[聚类工单] 查询异常: %s", str(e))
+            if progress_callback:
+                progress_callback(0, 0, f"异常: {str(e)[:50]}")
+
+        return {'rows': [], 'total': 0, 'page': 1, 'total_pages': 0, 'columns': []}
+
+    def query_all_orders(self, params, progress_callback=None):
+        """查询所有聚类工单（自动翻页获取全部）
+
+        Args:
+            params: 查询参数字典（同query_orders）
+            progress_callback: 进度回调函数
+
+        Returns:
+            list: 所有数据行
+        """
+        all_rows = []
+        page = 1
+        total_pages = 1
+
+        while page <= total_pages:
+            params['page'] = page
+            result = self.query_orders(params, progress_callback)
+
+            if result['rows']:
+                all_rows.extend(result['rows'])
+                total_pages = result['total_pages']
+
+                if progress_callback:
+                    progress_callback(
+                        len(all_rows), result['total'],
+                        f"第 {page}/{total_pages} 页，已获取 {len(all_rows)} 条"
+                    )
+
+                page += 1
+            else:
+                break
+
+        logger.info("[聚类工单] 共获取 %d 条数据", len(all_rows))
+        return all_rows

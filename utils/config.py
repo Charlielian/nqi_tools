@@ -124,6 +124,12 @@ JXCX_COUNT_URL = f'{BASE_URL}/pro-adhoc/adhocquery/getTableCount'
 JXCX_SEARCH_URL = f'{BASE_URL}/pro-adhoc/adhocquery/search'
 JXCX_TABLE_URL = f'{BASE_URL}/pro-adhoc/adhocquery/getSelectTable'
 
+# ========== 聚类工单查询API ==========
+LTESCHEME_BASE = f'{BASE_URL}/pro-ltemr-cicd/modules/disquery'
+GET_GRID_URL = f'{LTESCHEME_BASE}/getgrid'                           # 获取责任网格
+GET_PROBLEM_LABEL_URL = f'{LTESCHEME_BASE}/getproblemlabelByData'   # 获取问题标签
+QUERY_PROPOSAL_URL = f'{LTESCHEME_BASE}/queryProposal'               # 聚类工单查询主接口
+
 MAX_SINGLE_QUERY = 500000
 
 HEADERS = {

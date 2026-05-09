@@ -17,7 +17,7 @@ from gui.components import SearchableCombobox, CalendarDialog, Tooltip
 from gui.theme import colors, fonts, spacing
 from gui.first_run import check_first_run, show_first_run_wizard
 from core.auth import LoginManager
-from core.query import JXCXQuery
+from core.query import JXCXQuery, ClusterOrderQuery
 from core.export import export_with_format
 from core.license import TimeMonitor, invalidate_license, verify_serial_number, write_license_from_serial
 from core.license import (
@@ -138,7 +138,7 @@ class NqiToolGUI:
                         bg='#165DFF', fg='white')
         title.pack(anchor='w')
 
-        version = tk.Label(title_frame, text="NqiTool v1.0",
+        version = tk.Label(title_frame, text="NqiTool v1.1",
                           font=('Microsoft YaHei UI', 9),
                           bg='#1a6ce8', fg='white',
                           padx=8, pady=2)
@@ -178,20 +178,24 @@ class NqiToolGUI:
         content = tk.Frame(self.main_container, bg='#f9fafb')
         content.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
 
-        # 第一行：登录配置卡片（单行紧凑）
+        # 登录配置卡片（放在Notebook外面，顶部）
         self._build_login_card(content)
 
-        # 第二行：查询参数 + 提取参数（左右分布）
-        params_row = tk.Frame(content, bg='#f9fafb')
-        params_row.pack(fill=tk.X, pady=(0, 10))
+        # 创建Notebook标签页
+        self.notebook = ttk.Notebook(content)
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
-        # 左侧：查询参数卡片
-        self._build_query_card(params_row)
+        # 标签1：数据查询
+        self.jxcx_frame = tk.Frame(self.notebook, bg='#f9fafb')
+        self.notebook.add(self.jxcx_frame, text=" 📊 数据查询 ")
+        self._build_jxcx_content(self.jxcx_frame)
 
-        # 右侧：提取参数卡片
-        self._build_params_card(params_row)
+        # 标签2：聚类工单查询
+        self.cluster_frame = tk.Frame(self.notebook, bg='#f9fafb')
+        self.notebook.add(self.cluster_frame, text=" 📋 聚类工单查询 ")
+        self._build_cluster_content(self.cluster_frame)
 
-        # 底部：进度和日志
+        # 底部：进度和日志（放在Notebook外面）
         self._build_bottom_section(content)
 
         # 更新授权显示
@@ -272,6 +276,17 @@ class NqiToolGUI:
                              cursor='arrow', padx=20, pady=6,
                              command=self._on_login)
         self.login_btn.pack(side=tk.LEFT)
+
+    def _build_jxcx_content(self, parent):
+        """构建数据查询标签页内容"""
+        params_row = tk.Frame(parent, bg='#f9fafb')
+        params_row.pack(fill=tk.X, pady=(0, 10), padx=0)
+
+        # 左侧：查询参数卡片
+        self._build_query_card(params_row)
+
+        # 右侧：提取参数卡片
+        self._build_params_card(params_row)
 
     def _build_query_card(self, parent):
         """构建查询参数卡片（紧凑布局）"""
@@ -614,6 +629,244 @@ class NqiToolGUI:
                  cursor='arrow', relief='raised', padx=12, pady=5,
                  command=self.open_output_dir).pack(side=tk.RIGHT)
 
+    def _build_cluster_content(self, parent):
+        """构建聚类工单查询标签页内容"""
+        # 主容器
+        main_frame = tk.Frame(parent, bg='#f9fafb')
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+
+        # ========== 顶部查询参数区域 ==========
+        params_card = self._build_card(main_frame, "🔍 聚类工单查询参数")
+        params_card.pack(fill=tk.X, pady=(0, 10))
+
+        body = tk.Frame(params_card, bg='white')
+        body.pack(fill=tk.X, padx=16, pady=12)
+
+        # 第一行：时间类型 + 日期范围
+        row1 = tk.Frame(body, bg='white')
+        row1.pack(fill=tk.X, pady=(0, 8))
+        row1.pack_propagate(False)
+
+        # 时间类型
+        time_type_frame = tk.Frame(row1, bg='white')
+        time_type_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(time_type_frame, text="时间类型", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+
+        self.cluster_time_type_var = tk.StringVar(value='问题生成时间')
+        time_type_menu = ttk.Combobox(time_type_frame,
+                                       textvariable=self.cluster_time_type_var,
+                                       values=['问题生成时间', '派发时间', '确认时间'],
+                                       width=12, state='readonly')
+        time_type_menu.pack(pady=(2, 0))
+
+        # 日期范围
+        date_frame = tk.Frame(row1, bg='white')
+        date_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(date_frame, text="日期范围", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+
+        date_inner = tk.Frame(date_frame, bg='white')
+        date_inner.pack(pady=(2, 0))
+
+        yesterday = datetime.now() - timedelta(days=1)
+        self.cluster_start_var = tk.StringVar(value=yesterday.strftime('%Y-%m-%d'))
+        self.cluster_end_var = tk.StringVar(value=yesterday.strftime('%Y-%m-%d'))
+
+        start_entry = tk.Entry(date_inner, textvariable=self.cluster_start_var,
+                              font=('Microsoft YaHei UI', 9), width=10)
+        start_entry.pack(side=tk.LEFT)
+
+        tk.Label(date_inner, text=" 至 ", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=3)
+
+        end_entry = tk.Entry(date_inner, textvariable=self.cluster_end_var,
+                            font=('Microsoft YaHei UI', 9), width=10)
+        end_entry.pack(side=tk.LEFT)
+
+        # 第二行：地市 + 责任网格
+        row2 = tk.Frame(body, bg='white')
+        row2.pack(fill=tk.X, pady=(0, 8))
+        row2.pack_propagate(False)
+
+        # 地市选择
+        city_frame = tk.Frame(row2, bg='white')
+        city_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(city_frame, text="地市", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+
+        # 地市编码映射
+        self.CITY_CODE_MAP = {
+            '广州': '860199', '深圳': '860755', '东莞': '860769',
+            '佛山': '860757', '中山': '860760', '珠海': '860756',
+            '惠州': '860752', '江门': '860750', '肇庆': '860758',
+            '汕头': '860754', '汕尾': '860660', '潮州': '860761',
+            '揭阳': '860663', '云浮': '860766', '湛江': '860759',
+            '茂名': '860668', '阳江': '860662', '韶关': '860751',
+            '清远': '860762', '梅州': '860753', '河源': '860670',
+            '广东': ''  # 全网
+        }
+
+        self.cluster_city_var = tk.StringVar(value='阳江')
+        self.cluster_city_menu = ttk.Combobox(city_frame,
+                                              textvariable=self.cluster_city_var,
+                                              values=list(self.CITY_CODE_MAP.keys()),
+                                              width=10, state='readonly')
+        self.cluster_city_menu.pack(pady=(2, 0))
+        self.cluster_city_menu.bind('<<ComboboxSelected>>', self._on_cluster_city_changed)
+
+        # 责任网格（多选）
+        grid_frame = tk.Frame(row2, bg='white')
+        grid_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(grid_frame, text="责任网格", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+
+        self.cluster_grid_var = tk.StringVar(value='')
+        self.cluster_grid_entry = tk.Entry(grid_frame,
+                                          textvariable=self.cluster_grid_var,
+                                          font=('Microsoft YaHei UI', 9), width=18)
+        self.cluster_grid_entry.pack(pady=(2, 0))
+
+        tk.Label(grid_frame, text="（留空表示全部）",
+                font=('Microsoft YaHei UI', 7), bg='white', fg='#9ca3af').pack(anchor='w')
+
+        # 第三行：问题类型
+        row3 = tk.Frame(body, bg='white')
+        row3.pack(fill=tk.X, pady=(0, 8))
+
+        # 问题类型选择
+        type_frame = tk.Frame(row3, bg='white')
+        type_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(type_frame, text="问题类型", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+
+        self.cluster_problem_type_var = tk.StringVar(value='')
+        self.cluster_problem_type_entry = tk.Entry(type_frame,
+                                                   textvariable=self.cluster_problem_type_var,
+                                                   font=('Microsoft YaHei UI', 9), width=18)
+        self.cluster_problem_type_entry.pack(pady=(2, 0))
+
+        # 加载问题标签按钮
+        self.cluster_load_labels_btn = tk.Button(row3, text="加载问题标签",
+                                   font=('Microsoft YaHei UI', 8),
+                                   bg='#e8eaed', fg='#202124', bd=1,
+                                   cursor='arrow', relief='raised', padx=8, pady=2,
+                                   command=self._load_cluster_problem_labels)
+        self.cluster_load_labels_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+        # 问题状态
+        status_frame = tk.Frame(row3, bg='white')
+        status_frame.pack(side=tk.LEFT, padx=(0, 15))
+        tk.Label(status_frame, text="工单状态", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+
+        self.cluster_status_var = tk.StringVar(value='')
+        self.cluster_status_menu = ttk.Combobox(status_frame,
+                                               textvariable=self.cluster_status_var,
+                                               values=['', '待处理', '处理中', '已解决', '已关闭'],
+                                               width=10, state='readonly')
+        self.cluster_status_menu.pack(pady=(2, 0))
+
+        # 第四行：操作按钮
+        row4 = tk.Frame(body, bg='white')
+        row4.pack(fill=tk.X, pady=(4, 0))
+
+        self.cluster_query_btn = tk.Button(row4, text="🔍 查询",
+                                 font=('Microsoft YaHei UI', 10, 'bold'),
+                                 bg='#165DFF', fg='white', bd=1,
+                                 cursor='arrow', relief='raised', padx=22, pady=5,
+                                 command=self._on_cluster_query)
+        self.cluster_query_btn.pack(side=tk.LEFT)
+
+        self.cluster_export_btn = tk.Button(row4, text="📥 导出",
+                                  font=('Microsoft YaHei UI', 10, 'bold'),
+                                  bg='#22c55e', fg='white', bd=1,
+                                  cursor='arrow', relief='raised', padx=22, pady=5,
+                                  state=tk.DISABLED,
+                                  command=self._on_cluster_export)
+        self.cluster_export_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.cluster_stop_btn = tk.Button(row4, text="⏹ 停止",
+                                font=('Microsoft YaHei UI', 9),
+                                bg='#dc3545', fg='white', bd=1,
+                                cursor='arrow', relief='raised', padx=14, pady=5,
+                                state=tk.DISABLED,
+                                command=self._on_cluster_stop)
+        self.cluster_stop_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        # ========== 中部结果显示区域 ==========
+        result_card = self._build_card(main_frame, "📊 查询结果")
+        result_card.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        result_body = tk.Frame(result_card, bg='white')
+        result_body.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+
+        # 创建Treeview表格
+        table_frame = tk.Frame(result_body, bg='white')
+        table_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 滚动条
+        y_scroll = tk.Scrollbar(table_frame, orient=tk.VERTICAL)
+        y_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        x_scroll = tk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
+        x_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # 定义列
+        self.cluster_columns = [
+            '序号', '聚类工单序号', '问题小区', '问题小区名', '地市', '责任网格',
+            '派发时间', '问题类型', '方案类型', '方案描述', '方案确认人',
+            '评估状态', '当前状态', '问题原因', '数据来源'
+        ]
+
+        self.cluster_tree = ttk.Treeview(table_frame,
+                                        columns=self.cluster_columns,
+                                        show='tree headings',
+                                        yscrollcommand=y_scroll.set,
+                                        xscrollcommand=x_scroll.set,
+                                        height=12)
+
+        y_scroll.config(command=self.cluster_tree.yview)
+        x_scroll.config(command=self.cluster_tree.xview)
+
+        # 设置列宽
+        for col in self.cluster_columns:
+            self.cluster_tree.heading(col, text=col, anchor='w')
+            self.cluster_tree.column(col, width=120, anchor='w')
+
+        self.cluster_tree.pack(fill=tk.BOTH, expand=True)
+
+        # 分页控制
+        pager_frame = tk.Frame(result_body, bg='white')
+        pager_frame.pack(fill=tk.X, pady=(8, 0))
+
+        self.cluster_page_label = tk.Label(pager_frame, text="第 1 / 1 页，共 0 条",
+                                          font=('Microsoft YaHei UI', 9),
+                                          bg='white', fg='#5f6368')
+        self.cluster_page_label.pack(side=tk.LEFT)
+
+        tk.Button(pager_frame, text="◀ 上一页",
+                 font=('Microsoft YaHei UI', 8),
+                 bg='#e8eaed', fg='#202124', bd=1,
+                 cursor='arrow', relief='raised', padx=8, pady=2,
+                 state=tk.DISABLED,
+                 command=self._on_cluster_prev_page).pack(side=tk.LEFT, padx=(10, 3))
+
+        tk.Button(pager_frame, text="下一页 ▶",
+                 font=('Microsoft YaHei UI', 8),
+                 bg='#e8eaed', fg='#202124', bd=1,
+                 cursor='arrow', relief='raised', padx=8, pady=2,
+                 state=tk.DISABLED,
+                 command=self._on_cluster_next_page).pack(side=tk.LEFT)
+
+        # 存储查询结果
+        self.cluster_all_data = []  # 所有数据（翻页用）
+        self.cluster_current_page = 1
+        self.cluster_total_pages = 1
+        self.cluster_total_count = 0
+        self.cluster_is_querying = False
+        self.cluster_problem_labels = []
+
     def _build_bottom_section(self, parent):
         """构建底部日志区域"""
         # 直接使用 Frame 作为容器，填满所有剩余空间
@@ -654,17 +907,285 @@ class NqiToolGUI:
         log_area.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 16))
 
         self.log_text = scrolledtext.ScrolledText(log_area, height=15,
-                                                   font=('Consolas', 9),
-                                                   state='disabled',
-                                                   bg='#f8f9fa',
-                                                   relief='flat',
-                                                   bd=1)
+                                                  font=('Consolas', 9),
+                                                  state='disabled',
+                                                  bg='#f8f9fa',
+                                                  relief='flat',
+                                                  bd=1)
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
         # 添加日志处理器
         handler = LogTextHandler(self.log_text)
         handler.setLevel(logging.INFO)
         self.logger.addHandler(handler)
+
+    def _on_cluster_city_changed(self, event=None):
+        """地市选择改变时触发"""
+        city_name = self.cluster_city_var.get()
+        self.logger.info("[聚类工单] 选择地市: %s", city_name)
+
+    def _load_cluster_problem_labels(self):
+        """加载问题标签列表"""
+        if not self.session:
+            messagebox.showwarning("提示", "请先登录后再操作")
+            return
+
+        start_date = self.cluster_start_var.get()
+        end_date = self.cluster_end_var.get()
+
+        if not start_date or not end_date:
+            messagebox.showwarning("提示", "请选择日期范围")
+            return
+
+        self.logger.info("[聚类工单] 正在加载问题标签...")
+        self.cluster_load_labels_btn.config(state=tk.DISABLED)
+
+        def do_load():
+            try:
+                from core.query import ClusterOrderQuery
+                cluster_query = ClusterOrderQuery(self.session)
+                labels = cluster_query.get_problem_labels(start_date, end_date)
+
+                self.root.after(0, lambda: self._on_problem_labels_loaded(labels))
+            except Exception as e:
+                self.root.after(0, lambda: self._on_problem_labels_loaded([]))
+                self.logger.error("[聚类工单] 加载问题标签失败: %s", str(e))
+
+        threading.Thread(target=do_load, daemon=True).start()
+
+    def _on_problem_labels_loaded(self, labels):
+        """问题标签加载完成"""
+        self.cluster_load_labels_btn.config(state=tk.NORMAL)
+
+        if labels:
+            self.logger.info("[聚类工单] 加载到 %d 个问题标签", len(labels))
+            self.cluster_problem_labels = labels
+            # 可以在界面上显示已加载
+            self.cluster_problem_type_entry.config(foreground='#333333')
+        else:
+            self.logger.warning("[聚类工单] 未获取到问题标签")
+            self.cluster_problem_labels = []
+
+    def _on_cluster_query(self):
+        """执行聚类工单查询"""
+        if not self.session:
+            messagebox.showwarning("提示", "请先登录后再操作")
+            return
+
+        if self.cluster_is_querying:
+            return
+
+        start_date = self.cluster_start_var.get()
+        end_date = self.cluster_end_var.get()
+        city_name = self.cluster_city_var.get()
+        city_code = self.CITY_CODE_MAP.get(city_name, '')
+
+        if not start_date or not end_date:
+            messagebox.showwarning("提示", "请选择日期范围")
+            return
+
+        # 收集查询参数
+        params = {
+            'timeType': self.cluster_time_type_var.get(),
+            'start_date': start_date,
+            'end_date': end_date,
+            'city': city_code,
+            'area_grid': self.cluster_grid_var.get(),
+            'problem_status': self.cluster_status_var.get(),
+            'rows': 100,
+            'page': 1
+        }
+
+        # 添加详细问题类型
+        problem_type = self.cluster_problem_type_var.get().strip()
+        if problem_type:
+            params['detailed_type'] = [problem_type]
+
+        self.cluster_is_querying = True
+        self.cluster_query_btn.config(state=tk.DISABLED, text="查询中...")
+        self.cluster_stop_btn.config(state=tk.NORMAL)
+
+        # 清空之前的结果
+        for item in self.cluster_tree.get_children():
+            self.cluster_tree.delete(item)
+
+        self.logger.info("[聚类工单] 开始查询: %s - %s", start_date, end_date)
+
+        def do_query():
+            try:
+                from core.query import ClusterOrderQuery
+                cluster_query = ClusterOrderQuery(self.session)
+
+                def progress_callback(current, total, message):
+                    self.root.after(0, lambda m=message: self._update_cluster_progress(m, current, total))
+
+                result = cluster_query.query_orders(params, progress_callback)
+                self.root.after(0, lambda: self._on_cluster_query_done(result))
+
+            except Exception as e:
+                self.logger.error("[聚类工单] 查询异常: %s", str(e))
+                self.root.after(0, lambda: self._on_cluster_query_done({'rows': [], 'total': 0}))
+
+        threading.Thread(target=do_query, daemon=True).start()
+
+    def _update_cluster_progress(self, message, current, total):
+        """更新聚类工单查询进度"""
+        self.progress_lbl_detail.config(text=message)
+        if total > 0:
+            pct = int(current / total * 100) if total > 0 else 0
+            self.progress_lbl_pct.config(text=f"进度: {pct}%")
+
+    def _on_cluster_query_done(self, result):
+        """聚类工单查询完成"""
+        self.cluster_is_querying = False
+        self.cluster_query_btn.config(state=tk.NORMAL, text="🔍 查询")
+        self.cluster_stop_btn.config(state=tk.DISABLED)
+
+        rows = result.get('rows', [])
+        total = result.get('total', 0)
+        total_pages = result.get('total_pages', 1)
+
+        self.cluster_all_data = rows
+        self.cluster_total_count = total
+        self.cluster_total_pages = total_pages
+        self.cluster_current_page = 1
+
+        self.logger.info("[聚类工单] 查询完成: 共 %d 条数据", total)
+
+        # 更新分页信息
+        self.cluster_page_label.config(text=f"第 1 / {max(1, total_pages)} 页，共 {total} 条")
+
+        # 显示数据
+        self._display_cluster_page()
+
+        # 启用导出按钮
+        if rows:
+            self.cluster_export_btn.config(state=tk.NORMAL)
+
+    def _display_cluster_page(self):
+        """显示当前页的数据"""
+        # 清空表格
+        for item in self.cluster_tree.get_children():
+            self.cluster_tree.delete(item)
+
+        # 显示当前页数据（每页最多100条）
+        page_size = 100
+        start_idx = (self.cluster_current_page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_data = self.cluster_all_data[start_idx:end_idx]
+
+        for i, row in enumerate(page_data):
+            seq = start_idx + i + 1
+            values = [
+                str(seq),
+                row.get('聚类工单序号', ''),
+                row.get('问题小区', ''),
+                row.get('问题小区名', ''),
+                row.get('地市', ''),
+                row.get('责任网格', ''),
+                row.get('派发时间', ''),
+                row.get('问题点类型', ''),
+                row.get('方案类型', ''),
+                row.get('方案描述', ''),
+                row.get('方案确认人', ''),
+                row.get('评估状态', ''),
+                row.get('当前状态', ''),
+                row.get('问题原因', ''),
+                row.get('数据来源', '')
+            ]
+            self.cluster_tree.insert('', tk.END, values=values)
+
+    def _on_cluster_prev_page(self):
+        """上一页"""
+        if self.cluster_current_page > 1:
+            self.cluster_current_page -= 1
+            self._display_cluster_page()
+            self.cluster_page_label.config(
+                text=f"第 {self.cluster_current_page} / {self.cluster_total_pages} 页，共 {self.cluster_total_count} 条"
+            )
+
+    def _on_cluster_next_page(self):
+        """下一页"""
+        if self.cluster_current_page < self.cluster_total_pages:
+            self.cluster_current_page += 1
+            self._display_cluster_page()
+            self.cluster_page_label.config(
+                text=f"第 {self.cluster_current_page} / {self.cluster_total_pages} 页，共 {self.cluster_total_count} 条"
+            )
+
+    def _on_cluster_export(self):
+        """导出聚类工单数据"""
+        if not self.cluster_all_data:
+            messagebox.showwarning("提示", "没有数据可导出")
+            return
+
+        from tkinter import filedialog
+        import pandas as pd
+
+        file_path = filedialog.asksaveasfilename(
+            title="保存聚类工单数据",
+            defaultextension=".xlsx",
+            filetypes=[("Excel文件", "*.xlsx"), ("CSV文件", "*.csv")],
+            initialfile=f"聚类工单_{self.cluster_start_var.get()}_{self.cluster_end_var.get()}.xlsx"
+        )
+
+        if not file_path:
+            return
+
+        self.logger.info("[聚类工单] 正在导出数据到: %s", file_path)
+
+        try:
+            # 清理HTML内容
+            import re
+            def clean_html(text):
+                if not isinstance(text, str):
+                    return text
+                # 移除HTML链接
+                text = re.sub(r'<a[^>]*>([^<]*)</a>', r'\1', text)
+                text = re.sub(r'<[^>]+>', '', text)
+                return text.strip()
+
+            # 构建DataFrame
+            df_data = []
+            for i, row in enumerate(self.cluster_all_data):
+                df_data.append({
+                    '序号': i + 1,
+                    '聚类工单序号': clean_html(row.get('聚类工单序号', '')),
+                    '问题小区': clean_html(row.get('问题小区', '')),
+                    '问题小区名': clean_html(row.get('问题小区名', '')),
+                    '地市': clean_html(row.get('地市', '')),
+                    '责任网格': clean_html(row.get('责任网格', '')),
+                    '派发时间': clean_html(row.get('派发时间', '')),
+                    '问题类型': clean_html(row.get('问题点类型', '')),
+                    '方案类型': clean_html(row.get('方案类型', '')),
+                    '方案描述': clean_html(row.get('方案描述', '')),
+                    '方案确认人': clean_html(row.get('方案确认人', '')),
+                    '评估状态': clean_html(row.get('评估状态', '')),
+                    '当前状态': clean_html(row.get('当前状态', '')),
+                    '问题原因': clean_html(row.get('问题原因', '')),
+                    '数据来源': clean_html(row.get('数据来源', ''))
+                })
+
+            df = pd.DataFrame(df_data)
+
+            if file_path.endswith('.xlsx'):
+                df.to_excel(file_path, index=False, engine='openpyxl')
+            else:
+                df.to_csv(file_path, index=False, encoding='utf-8-sig')
+
+            self.logger.info("[聚类工单] 导出成功: %s (%d 条)", file_path, len(df))
+            messagebox.showinfo("成功", f"导出成功！\n共 {len(df)} 条数据\n保存至: {file_path}")
+
+        except Exception as e:
+            self.logger.error("[聚类工单] 导出失败: %s", str(e))
+            messagebox.showerror("错误", f"导出失败: {str(e)}")
+
+    def _on_cluster_stop(self):
+        """停止聚类工单查询"""
+        self.cluster_is_querying = False
+        self.cluster_query_btn.config(state=tk.NORMAL, text="🔍 查询")
+        self.cluster_stop_btn.config(state=tk.DISABLED)
+        self.logger.info("[聚类工单] 查询已停止")
 
     def _update_license_display(self):
         """更新授权时间显示"""
