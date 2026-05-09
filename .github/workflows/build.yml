@@ -50,8 +50,33 @@ jobs:
       run: |
         pyinstaller NqiTool.spec
 
+    - name: Package release ZIP
+      shell: pwsh
+      run: |
+        # 创建发布目录
+        New-Item -Path "release/NqiTool" -ItemType Directory -Force
+
+        # 复制 EXE
+        Copy-Item "dist/NqiTool.exe" "release/NqiTool/"
+
+        # 复制 config.yaml（打包前已创建）
+        Copy-Item "config.yaml" "release/NqiTool/"
+
+        # 创建必要的运行时目录
+        New-Item -Path "release/NqiTool/data_output" -ItemType Directory -Force
+        New-Item -Path "release/NqiTool/cookies" -ItemType Directory -Force
+        New-Item -Path "release/NqiTool/captcha_images" -ItemType Directory -Force
+        New-Item -Path "release/NqiTool/logs" -ItemType Directory -Force
+
+        # 打包为 ZIP
+        Compress-Archive -Path "release/NqiTool" -DestinationPath "release/NqiTool.zip" -Force
+
+        # 显示内容
+        Write-Host "ZIP 包内容:"
+        Get-ChildItem -Path "release/NqiTool" -Recurse | ForEach-Object { Write-Host "  $($_.FullName.Replace('release\NqiTool\', ''))" }
+
     - name: Upload artifact
       uses: actions/upload-artifact@v6
       with:
         name: nqi_tool
-        path: dist/NqiTool.exe
+        path: release/NqiTool.zip
