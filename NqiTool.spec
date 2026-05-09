@@ -14,7 +14,6 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('授权工具/public_key.pem', '授权工具'),
         ('config.yaml', '.'),
     ],
     hiddenimports=[
