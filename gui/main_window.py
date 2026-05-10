@@ -794,6 +794,14 @@ class NqiToolGUI:
                                 command=self._on_cluster_stop)
         self.cluster_stop_btn.pack(side=tk.LEFT, padx=(8, 0))
 
+        # 在浏览器中打开按钮
+        self.cluster_open_browser_btn = tk.Button(row4, text="🌐 在浏览器打开",
+                                font=('Microsoft YaHei UI', 9),
+                                bg='#6c757d', fg='white', bd=1,
+                                cursor='arrow', relief='raised', padx=14, pady=5,
+                                command=self._on_cluster_open_browser)
+        self.cluster_open_browser_btn.pack(side=tk.LEFT, padx=(8, 0))
+
         # ========== 中部结果显示区域 ==========
         result_card = self._build_card(main_frame, "📊 查询结果")
         result_card.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
@@ -1186,6 +1194,15 @@ class NqiToolGUI:
         self.cluster_query_btn.config(state=tk.NORMAL, text="🔍 查询")
         self.cluster_stop_btn.config(state=tk.DISABLED)
         self.logger.info("[聚类工单] 查询已停止")
+
+    def _on_cluster_open_browser(self):
+        """在浏览器中打开聚类工单页面"""
+        import webbrowser
+        from utils.config import BASE_URL
+
+        url = f"{BASE_URL}/pro-ltemr-cicd/modules/ltescheme/unify/disquery/showgis.jsp"
+        self.logger.info("[聚类工单] 正在浏览器中打开: %s", url)
+        webbrowser.open(url)
 
     def _update_license_display(self):
         """更新授权时间显示"""

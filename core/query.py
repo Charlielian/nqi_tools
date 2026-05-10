@@ -1740,15 +1740,17 @@ class ClusterOrderQuery:
     def __init__(self, session):
         self.sess = session
         from utils.config import (
-            GET_GRID_URL, GET_PROBLEM_LABEL_URL, QUERY_PROPOSAL_URL
+            BASE_URL, GET_GRID_URL, GET_PROBLEM_LABEL_URL, QUERY_PROPOSAL_URL
         )
+        self.base_url = BASE_URL
         self.grid_url = GET_GRID_URL
         self.label_url = GET_PROBLEM_LABEL_URL
         self.query_url = QUERY_PROPOSAL_URL
+        self._initialized = False
 
         # 聚类工单API专用headers（参考浏览器请求）
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.97 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'Accept': 'application/json, text/javascript, */*; q=0.01',
             'Origin': 'https://nqi.gmcc.net:20443',
@@ -1760,6 +1762,41 @@ class ClusterOrderQuery:
             'Accept-Encoding': 'gzip, deflate, br'
         }
 
+    def _ensure_session(self):
+        """确保聚类工单Session已初始化
+
+        访问 pro-ltemr-cicd/portal 页面以获取该模块专属的Session
+        这个Session对于后续的聚类工单API调用是必需的
+        """
+        if self._initialized:
+            return True
+
+        try:
+            # 访问聚类工单页面以获取Session
+            # 这个请求会返回一个302重定向到CAS，并设置新的JSESSIONID
+            portal_url = f"{self.base_url}/pro-ltemr-cicd/portal?menuname=jlwtd&address=/modules/ltescheme/unify/disquery/showgis.jsp"
+            logger.info("[聚类工单] 初始化Session，访问: %s", portal_url)
+
+            # 使用 allow_redirects=True 跟随重定向
+            res = self.sess.get(portal_url, headers=self.headers, timeout=30, allow_redirects=True)
+
+            # 检查是否成功获取到Session
+            jsessionid = get_cookie_value(self.sess.cookies, 'JSESSIONID', domain='nqi.gmcc.net')
+            if not jsessionid:
+                jsessionid = get_cookie_value(self.sess.cookies, 'JSESSIONID')
+
+            if jsessionid:
+                logger.info("[聚类工单] Session初始化成功，JSESSIONID: %s...", jsessionid[:16])
+                self._initialized = True
+                return True
+            else:
+                logger.warning("[聚类工单] Session初始化失败，未获取到JSESSIONID")
+                return False
+
+        except Exception as e:
+            logger.error("[聚类工单] Session初始化异常: %s", str(e))
+            return False
+
     def get_grids(self, city_code):
         """获取责任网格列表
 
@@ -1769,6 +1806,11 @@ class ClusterOrderQuery:
         Returns:
             list: 网格列表 [{'id': '责任网格-阳江阳西县', 'text': '责任网格-阳江阳西县'}, ...]
         """
+        # 确保Session已初始化
+        if not self._ensure_session():
+            logger.warning("[聚类工单] Session未初始化，无法获取网格")
+            return []
+
         try:
             data = {'city': city_code}
             res = self.sess.post(self.grid_url, data=data, headers=self.headers, timeout=30)
@@ -1799,11 +1841,15 @@ class ClusterOrderQuery:
         Returns:
             list: 问题标签列表 [{'id': 'xxx', 'text': 'xxx'}, ...]
         """
+        # 确保Session已初始化
+        if not self._ensure_session():
+            logger.warning("[聚类工单] Session未初始化，无法获取问题标签")
+            return []
+
         try:
+            # 浏览器实际只发送typeid参数
             data = {
-                'typeid': typeid,
-                'starttime': start_date,
-                'endtime': end_date
+                'typeid': typeid
             }
             res = self.sess.post(self.label_url, data=data, headers=self.headers, timeout=30)
 
@@ -1813,7 +1859,7 @@ class ClusterOrderQuery:
                     logger.info("[聚类工单] 获取到 %d 个问题标签", len(result))
                     return result
                 else:
-                    logger.warning("[聚类工单] 问题标签返回格式异常")
+                    logger.warning("[聚类工单] 问题标签返回格式异常: %s", result)
             else:
                 logger.warning("[聚类工单] 获取问题标签HTTP错误: %d", res.status_code)
         except Exception as e:
@@ -1846,10 +1892,19 @@ class ClusterOrderQuery:
                 'columns': 列定义
             }
         """
+        # 确保Session已初始化
+        if not self._ensure_session():
+            logger.warning("[聚类工单] Session未初始化，无法查询")
+            if progress_callback:
+                progress_callback(0, 0, "Session初始化失败")
+            return {'rows': [], 'total': 0, 'page': 1, 'total_pages': 0, 'columns': []}
+
         try:
             # 构建请求数据
+            # firstQuery: 首次查询时设为1，后续查询设为空
+            is_first_query = params.get('first_query', True)
             post_data = {
-                'firstQuery': '',
+                'firstQuery': '1' if is_first_query else '',
                 'timeType': params.get('timeType', '问题生成时间'),
                 'start_date': params.get('start_date', ''),
                 'end_date': params.get('end_date', ''),
@@ -1874,7 +1929,7 @@ class ClusterOrderQuery:
                 'vcimport': '',
                 'vcdatatype': '',
                 'intproposal_company': '',
-                'isquery': 'ture',
+                'isquery': 'true',
                 'ordercheck': '',
                 'ischeck': '',
                 'isDuplicateRemoval': 'false',
@@ -1897,15 +1952,12 @@ class ClusterOrderQuery:
                 'pagination[page]': params.get('page', 1),
             }
 
-            # 添加详细问题类型
+            # 添加详细问题类型（使用浏览器实际格式: detailed_type[]）
             detailed_types = params.get('detailed_type', [])
             if detailed_types:
+                # 使用 detailed_type[] 格式，与浏览器请求一致
                 for dt in detailed_types:
-                    post_data.setdefault('detailed_type[]', []).append(dt)
-                # 如果detailed_type[]不存在，需要特殊处理
-                if 'detailed_type[]' not in post_data:
-                    for i, dt in enumerate(detailed_types):
-                        post_data[f'detailed_type[{i}]'] = dt
+                    post_data['detailed_type[]'] = dt
 
             if progress_callback:
                 progress_callback(0, 0, "正在查询聚类工单...")

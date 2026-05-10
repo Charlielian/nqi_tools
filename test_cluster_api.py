@@ -104,6 +104,33 @@ def test_api(username='default'):
         else:
             logger.warning("[WARN] Cookie '%s' 不存在", name)
 
+    # 步骤0: 初始化聚类工单Session
+    # 访问 pro-ltemr-cicd/portal 页面以获取该模块专属的Session
+    logger.info("\n--- 初始化聚类工单Session ---")
+    init_url = f'{BASE_URL}/pro-ltemr-cicd/portal?menuname=jlwtd&address=/modules/ltescheme/unify/disquery/showgis.jsp'
+    try:
+        logger.debug("初始化URL: %s", init_url)
+        res = sess.get(init_url, headers=HEADERS, timeout=30, allow_redirects=True)
+
+        # 检查新的JSESSIONID
+        new_jsessionid = None
+        for cookie in sess.cookies:
+            if cookie.name == 'JSESSIONID' and 'pro-ltemr' in str(cookie.domain if hasattr(cookie, 'domain') else ''):
+                new_jsessionid = cookie.value
+                break
+        if not new_jsessionid:
+            for cookie in sess.cookies:
+                if cookie.name == 'JSESSIONID':
+                    new_jsessionid = cookie.value
+                    break
+
+        if new_jsessionid:
+            logger.info("[OK] 聚类工单Session初始化成功，JSESSIONID: %s...", new_jsessionid[:16])
+        else:
+            logger.warning("[WARN] 聚类工单Session可能未正确初始化")
+    except Exception as e:
+        logger.exception("[ERROR] Session初始化异常: %s", str(e))
+
     # 测试1: getgrid
     logger.info("\n--- 测试 getgrid ---")
     grid_url = f'{PRO_LTESCHEME_URL}/getgrid'
@@ -131,13 +158,11 @@ def test_api(username='default'):
     except Exception as e:
         logger.exception("[ERROR] 获取网格异常: %s", str(e))
 
-    # 测试2: getproblemlabelByData
-    logger.info("\n--- 测试 getproblemlabelByData ---")
-    label_url = f'{PRO_LTESCHEME_URL}/getproblemlabelByData'
+    # 测试2: getproblemlabel
+    logger.info("\n--- 测试 getproblemlabel ---")
+    label_url = f'{PRO_LTESCHEME_URL}/getproblemlabel'
     data = {
-        'typeid': '1',
-        'starttime': '2026-05-01',
-        'endtime': '2026-05-09'
+        'typeid': '1'
     }
 
     try:
@@ -186,7 +211,7 @@ def test_api(username='default'):
         'vcimport': '',
         'vcdatatype': '',
         'intproposal_company': '',
-        'isquery': 'ture',
+        'isquery': 'true',
         'ordercheck': '',
         'ischeck': '',
         'isDuplicateRemoval': 'false',
