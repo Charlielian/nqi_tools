@@ -17,16 +17,10 @@ from gui.components import SearchableCombobox, CalendarDialog, Tooltip
 from gui.theme import colors, fonts, spacing
 from gui.first_run import check_first_run, show_first_run_wizard
 from core.auth import LoginManager
-from core.query import JXCXQuery, ClusterOrderQuery
-from core.export import export_with_format
-from core.license import TimeMonitor, invalidate_license, verify_serial_number, write_license_from_serial
-from core.license import (
-    generate_machine_code, get_hw_info, verify_with_user_code,
-    save_user_code, load_user_code, delete_user_code, get_user_code_info
-)
+from core.query import JXCXQuery
+from core.export import export_to_excel
 from utils.logger import ensure_dirs, setup_report_logging
 from utils.config import LOG_DIR, OUTPUT_DIR, EXPIRY_DATE, DEFAULT_USERNAME, DEFAULT_PASSWORD
-import pandas as pd
 
 
 def check_and_setup_credentials():
@@ -67,13 +61,12 @@ class NqiToolGUI:
         self._progress_last_value = 0     # 上次进度值
         self._total_expected = 0           # 预期总进度
 
+        # 标签搜索防抖
+        self._label_search_after_id = None  # 防抖定时器 ID
+
         self._setup_logging()
         self._create_widgets()
         self._bind_events()
-
-        # 启动时间监控（后台运行，检测时间回拨）
-        self._time_monitor = TimeMonitor(interval=30, callback=self._on_time_rollback)
-        self._time_monitor.start()
 
         self.logger.info("=" * 50)
         self.logger.info("NQI工具 GUI 启动")
@@ -154,14 +147,6 @@ class NqiToolGUI:
                               bg='#165DFF', fg='#e0e7ff')
         self.license_label.pack(side=tk.LEFT, padx=(0, 15))
 
-        # 激活按钮
-        self.activate_btn = tk.Button(self.right_frame, text="🎫 激活",
-                              font=('Microsoft YaHei UI', 9),
-                              bg='#22c55e', fg='white', bd=0,
-                              cursor='hand2', relief='flat', padx=10, pady=4,
-                              command=self._show_activate_window)
-        self.activate_btn.pack(side=tk.LEFT, padx=(0, 10))
-
         # 状态指示器
         self.status_dot = tk.Label(self.right_frame, text="●", font=('Arial', 14),
                             bg='#165DFF', fg='#a5b4fc')
@@ -189,11 +174,6 @@ class NqiToolGUI:
         self.jxcx_frame = tk.Frame(self.notebook, bg='#f9fafb')
         self.notebook.add(self.jxcx_frame, text=" 📊 数据查询 ")
         self._build_jxcx_content(self.jxcx_frame)
-
-        # 标签2：聚类工单查询
-        self.cluster_frame = tk.Frame(self.notebook, bg='#f9fafb')
-        self.notebook.add(self.cluster_frame, text=" 📋 聚类工单查询 ")
-        self._build_cluster_content(self.cluster_frame)
 
         # 底部：进度和日志（放在Notebook外面）
         self._build_bottom_section(content)
@@ -296,73 +276,15 @@ class NqiToolGUI:
         body = tk.Frame(card, bg='white')
         body.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
 
-        # ========== 数据分类（横向排列）==========
-        cat_frame = tk.Frame(body, bg='white')
-        cat_frame.pack(fill=tk.X, pady=(0, 8))
-
-        tk.Label(cat_frame, text="数据分类：", font=('Microsoft YaHei UI', 9, 'bold'),
-                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=(0, 6))
-
-        self.category_vars = {}
-        categories = ["干扰", "容量", "工参", "MR覆盖", "语音报表", "小区性能", "全程完好率", "语音小区"]
-
-        for name in categories:
-            var = tk.IntVar(value=0)
-            self.category_vars[name] = var
-            cb = tk.Checkbutton(cat_frame, text=name, variable=var,
-                              font=('Microsoft YaHei UI', 9, 'bold'),
-                              bg='white', fg='#202124',
-                              selectcolor='#165DFF',
-                              activebackground='white',
-                              activeforeground='#165DFF',
-                              cursor='hand2',
-                              command=lambda c=name: self._on_category_changed(c))
-            cb.pack(side=tk.LEFT, padx=(0, 8))
-
-        # 添加全选/取消全选按钮
-        cat_btn_frame = tk.Frame(cat_frame, bg='white')
-        cat_btn_frame.pack(side=tk.RIGHT, padx=(10, 0))
-
-        tk.Button(cat_btn_frame, text="全选",
-                 font=('Microsoft YaHei UI', 8),
-                 bg='#e8eaed', fg='#202124', bd=1,
-                 cursor='arrow', relief='raised', padx=8, pady=2,
-                 command=self._select_all_categories).pack(side=tk.LEFT, padx=(0, 3))
-
-        tk.Button(cat_btn_frame, text="取消",
-                 font=('Microsoft YaHei UI', 8),
-                 bg='#e8eaed', fg='#202124', bd=1,
-                 cursor='arrow', relief='raised', padx=8, pady=2,
-                 command=self._deselect_all_categories).pack(side=tk.LEFT)
-
-        # ========== 数据表选择（下拉框 + 搜索过滤）==========
+        # ========== 数据表选择（多选复选框）==========
         table_frame = tk.Frame(body, bg='white')
         table_frame.pack(fill=tk.X, pady=(0, 8))
 
-        # 表头行
-        table_header = tk.Frame(table_frame, bg='white')
-        table_header.pack(fill=tk.X)
-
-        tk.Label(table_header, text="选择数据表：", font=('Microsoft YaHei UI', 9, 'bold'),
+        # 标签
+        tk.Label(table_frame, text="数据表：", font=('Microsoft YaHei UI', 9, 'bold'),
                 bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=(0, 6))
 
-        # 搜索框
-        self.table_search_var = tk.StringVar()
-        self.table_search_entry = tk.Entry(
-            table_header, textvariable=self.table_search_var,
-            font=('Microsoft YaHei UI', 9), width=12,
-            relief='solid', bd=1
-        )
-        self.table_search_entry.pack(side=tk.LEFT, padx=(0, 6))
-        self.table_search_entry.insert(0, "搜索报表...")
-        self.table_search_entry.config(foreground='gray')
-
-        # 搜索框事件
-        self.table_search_entry.bind('<FocusIn>', self._on_search_focus_in)
-        self.table_search_entry.bind('<FocusOut>', self._on_search_focus_out)
-        self.table_search_entry.bind('<KeyRelease>', self._on_table_search)
-
-        self.table_vars = {}
+        # 所有可选数据表
         TABLE_CATEGORIES = {
             '干扰': ['5G干扰小区', '4G干扰小区'],
             '容量': ['5G小区容量报表', '重要场景-天'],
@@ -379,21 +301,15 @@ class NqiToolGUI:
         for tables in TABLE_CATEGORIES.values():
             all_tables.extend(tables)
 
-        for name in all_tables:
-            self.table_vars[name] = tk.IntVar(value=0)
-
-        # 保存所有表格列表用于搜索
-        self._all_tables = all_tables
-        self._filtered_tables = all_tables.copy()
-
-        # 使用下拉框选择数据表
+        # 使用 MultiSelectDropdown 实现多选（带复选框）
         self.table_dropdown = MultiSelectDropdown(
             table_frame,
             all_tables,
-            width=22,
-            select_all=False
+            width=16,
+            select_all=False,
+            max_dropdown_items=5
         )
-        self.table_dropdown.pack(pady=(2, 0))
+        self.table_dropdown.pack(side=tk.LEFT, padx=(0, 6))
 
         # 自定义字段选择
         custom_field_frame = tk.Frame(body, bg='white')
@@ -445,7 +361,7 @@ class NqiToolGUI:
         self.city_dropdown = MultiSelectDropdown(
             city_frame,
             MultiSelectDropdown.GD_CITIES,
-            width=12,
+            width=8,
             select_all=False
         )
         self.city_dropdown.pack(pady=(2, 0))
@@ -629,252 +545,6 @@ class NqiToolGUI:
                  cursor='arrow', relief='raised', padx=12, pady=5,
                  command=self.open_output_dir).pack(side=tk.RIGHT)
 
-    def _build_cluster_content(self, parent):
-        """构建聚类工单查询标签页内容"""
-        # 主容器
-        main_frame = tk.Frame(parent, bg='#f9fafb')
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
-
-        # ========== 顶部查询参数区域 ==========
-        params_card = self._build_card(main_frame, "🔍 聚类工单查询参数")
-        params_card.pack(fill=tk.X, pady=(0, 10))
-
-        body = tk.Frame(params_card, bg='white')
-        body.pack(fill=tk.X, padx=16, pady=12)
-
-        # 第一行：时间类型 + 日期范围
-        row1 = tk.Frame(body, bg='white')
-        row1.pack(fill=tk.X, pady=(0, 8))
-        row1.pack_propagate(False)
-
-        # 时间类型
-        time_type_frame = tk.Frame(row1, bg='white')
-        time_type_frame.pack(side=tk.LEFT, padx=(0, 15))
-        tk.Label(time_type_frame, text="时间类型", font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#5f6368').pack(anchor='w')
-
-        self.cluster_time_type_var = tk.StringVar(value='问题生成时间')
-        time_type_menu = ttk.Combobox(time_type_frame,
-                                       textvariable=self.cluster_time_type_var,
-                                       values=['问题生成时间', '派发时间', '确认时间'],
-                                       width=12, state='readonly')
-        time_type_menu.pack(pady=(2, 0))
-
-        # 日期范围
-        date_frame = tk.Frame(row1, bg='white')
-        date_frame.pack(side=tk.LEFT, padx=(0, 15))
-        tk.Label(date_frame, text="日期范围", font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#5f6368').pack(anchor='w')
-
-        date_inner = tk.Frame(date_frame, bg='white')
-        date_inner.pack(pady=(2, 0))
-
-        yesterday = datetime.now() - timedelta(days=1)
-        self.cluster_start_var = tk.StringVar(value=yesterday.strftime('%Y-%m-%d'))
-        self.cluster_end_var = tk.StringVar(value=yesterday.strftime('%Y-%m-%d'))
-
-        start_entry = tk.Entry(date_inner, textvariable=self.cluster_start_var,
-                              font=('Microsoft YaHei UI', 9), width=10)
-        start_entry.pack(side=tk.LEFT)
-
-        tk.Label(date_inner, text=" 至 ", font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=3)
-
-        end_entry = tk.Entry(date_inner, textvariable=self.cluster_end_var,
-                            font=('Microsoft YaHei UI', 9), width=10)
-        end_entry.pack(side=tk.LEFT)
-
-        # 第二行：地市 + 责任网格
-        row2 = tk.Frame(body, bg='white')
-        row2.pack(fill=tk.X, pady=(0, 8))
-        row2.pack_propagate(False)
-
-        # 地市选择
-        city_frame = tk.Frame(row2, bg='white')
-        city_frame.pack(side=tk.LEFT, padx=(0, 15))
-        tk.Label(city_frame, text="地市", font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#5f6368').pack(anchor='w')
-
-        # 地市编码映射
-        self.CITY_CODE_MAP = {
-            '广州': '860199', '深圳': '860755', '东莞': '860769',
-            '佛山': '860757', '中山': '860760', '珠海': '860756',
-            '惠州': '860752', '江门': '860750', '肇庆': '860758',
-            '汕头': '860754', '汕尾': '860660', '潮州': '860761',
-            '揭阳': '860663', '云浮': '860766', '湛江': '860759',
-            '茂名': '860668', '阳江': '860662', '韶关': '860751',
-            '清远': '860762', '梅州': '860753', '河源': '860670',
-            '广东': ''  # 全网
-        }
-
-        self.cluster_city_var = tk.StringVar(value='阳江')
-        self.cluster_city_menu = ttk.Combobox(city_frame,
-                                              textvariable=self.cluster_city_var,
-                                              values=list(self.CITY_CODE_MAP.keys()),
-                                              width=10, state='readonly')
-        self.cluster_city_menu.pack(pady=(2, 0))
-        self.cluster_city_menu.bind('<<ComboboxSelected>>', self._on_cluster_city_changed)
-
-        # 责任网格（多选）
-        grid_frame = tk.Frame(row2, bg='white')
-        grid_frame.pack(side=tk.LEFT, padx=(0, 15))
-        tk.Label(grid_frame, text="责任网格", font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#5f6368').pack(anchor='w')
-
-        self.cluster_grid_var = tk.StringVar(value='')
-        self.cluster_grid_entry = tk.Entry(grid_frame,
-                                          textvariable=self.cluster_grid_var,
-                                          font=('Microsoft YaHei UI', 9), width=18)
-        self.cluster_grid_entry.pack(pady=(2, 0))
-
-        tk.Label(grid_frame, text="（留空表示全部）",
-                font=('Microsoft YaHei UI', 7), bg='white', fg='#9ca3af').pack(anchor='w')
-
-        # 第三行：问题类型
-        row3 = tk.Frame(body, bg='white')
-        row3.pack(fill=tk.X, pady=(0, 8))
-
-        # 问题类型选择
-        type_frame = tk.Frame(row3, bg='white')
-        type_frame.pack(side=tk.LEFT, padx=(0, 15))
-        tk.Label(type_frame, text="问题类型", font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#5f6368').pack(anchor='w')
-
-        self.cluster_problem_type_var = tk.StringVar(value='')
-        self.cluster_problem_type_entry = tk.Entry(type_frame,
-                                                   textvariable=self.cluster_problem_type_var,
-                                                   font=('Microsoft YaHei UI', 9), width=18)
-        self.cluster_problem_type_entry.pack(pady=(2, 0))
-
-        # 加载问题标签按钮
-        self.cluster_load_labels_btn = tk.Button(row3, text="加载问题标签",
-                                   font=('Microsoft YaHei UI', 8),
-                                   bg='#e8eaed', fg='#202124', bd=1,
-                                   cursor='arrow', relief='raised', padx=8, pady=2,
-                                   command=self._load_cluster_problem_labels)
-        self.cluster_load_labels_btn.pack(side=tk.LEFT, padx=(5, 0))
-
-        # 问题状态
-        status_frame = tk.Frame(row3, bg='white')
-        status_frame.pack(side=tk.LEFT, padx=(0, 15))
-        tk.Label(status_frame, text="工单状态", font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#5f6368').pack(anchor='w')
-
-        self.cluster_status_var = tk.StringVar(value='')
-        self.cluster_status_menu = ttk.Combobox(status_frame,
-                                               textvariable=self.cluster_status_var,
-                                               values=['', '待处理', '处理中', '已解决', '已关闭'],
-                                               width=10, state='readonly')
-        self.cluster_status_menu.pack(pady=(2, 0))
-
-        # 第四行：操作按钮
-        row4 = tk.Frame(body, bg='white')
-        row4.pack(fill=tk.X, pady=(4, 0))
-
-        self.cluster_query_btn = tk.Button(row4, text="🔍 查询",
-                                 font=('Microsoft YaHei UI', 10, 'bold'),
-                                 bg='#165DFF', fg='white', bd=1,
-                                 cursor='arrow', relief='raised', padx=22, pady=5,
-                                 command=self._on_cluster_query)
-        self.cluster_query_btn.pack(side=tk.LEFT)
-
-        self.cluster_export_btn = tk.Button(row4, text="📥 导出",
-                                  font=('Microsoft YaHei UI', 10, 'bold'),
-                                  bg='#22c55e', fg='white', bd=1,
-                                  cursor='arrow', relief='raised', padx=22, pady=5,
-                                  state=tk.DISABLED,
-                                  command=self._on_cluster_export)
-        self.cluster_export_btn.pack(side=tk.LEFT, padx=(8, 0))
-
-        self.cluster_stop_btn = tk.Button(row4, text="⏹ 停止",
-                                font=('Microsoft YaHei UI', 9),
-                                bg='#dc3545', fg='white', bd=1,
-                                cursor='arrow', relief='raised', padx=14, pady=5,
-                                state=tk.DISABLED,
-                                command=self._on_cluster_stop)
-        self.cluster_stop_btn.pack(side=tk.LEFT, padx=(8, 0))
-
-        # 在浏览器中打开按钮
-        self.cluster_open_browser_btn = tk.Button(row4, text="🌐 在浏览器打开",
-                                font=('Microsoft YaHei UI', 9),
-                                bg='#6c757d', fg='white', bd=1,
-                                cursor='arrow', relief='raised', padx=14, pady=5,
-                                command=self._on_cluster_open_browser)
-        self.cluster_open_browser_btn.pack(side=tk.LEFT, padx=(8, 0))
-
-        # ========== 中部结果显示区域 ==========
-        result_card = self._build_card(main_frame, "📊 查询结果")
-        result_card.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-
-        result_body = tk.Frame(result_card, bg='white')
-        result_body.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
-
-        # 创建Treeview表格
-        table_frame = tk.Frame(result_body, bg='white')
-        table_frame.pack(fill=tk.BOTH, expand=True)
-
-        # 滚动条
-        y_scroll = tk.Scrollbar(table_frame, orient=tk.VERTICAL)
-        y_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        x_scroll = tk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
-        x_scroll.pack(side=tk.BOTTOM, fill=tk.X)
-
-        # 定义列
-        self.cluster_columns = [
-            '序号', '聚类工单序号', '问题小区', '问题小区名', '地市', '责任网格',
-            '派发时间', '问题类型', '方案类型', '方案描述', '方案确认人',
-            '评估状态', '当前状态', '问题原因', '数据来源'
-        ]
-
-        self.cluster_tree = ttk.Treeview(table_frame,
-                                        columns=self.cluster_columns,
-                                        show='tree headings',
-                                        yscrollcommand=y_scroll.set,
-                                        xscrollcommand=x_scroll.set,
-                                        height=12)
-
-        y_scroll.config(command=self.cluster_tree.yview)
-        x_scroll.config(command=self.cluster_tree.xview)
-
-        # 设置列宽
-        for col in self.cluster_columns:
-            self.cluster_tree.heading(col, text=col, anchor='w')
-            self.cluster_tree.column(col, width=120, anchor='w')
-
-        self.cluster_tree.pack(fill=tk.BOTH, expand=True)
-
-        # 分页控制
-        pager_frame = tk.Frame(result_body, bg='white')
-        pager_frame.pack(fill=tk.X, pady=(8, 0))
-
-        self.cluster_page_label = tk.Label(pager_frame, text="第 1 / 1 页，共 0 条",
-                                          font=('Microsoft YaHei UI', 9),
-                                          bg='white', fg='#5f6368')
-        self.cluster_page_label.pack(side=tk.LEFT)
-
-        tk.Button(pager_frame, text="◀ 上一页",
-                 font=('Microsoft YaHei UI', 8),
-                 bg='#e8eaed', fg='#202124', bd=1,
-                 cursor='arrow', relief='raised', padx=8, pady=2,
-                 state=tk.DISABLED,
-                 command=self._on_cluster_prev_page).pack(side=tk.LEFT, padx=(10, 3))
-
-        tk.Button(pager_frame, text="下一页 ▶",
-                 font=('Microsoft YaHei UI', 8),
-                 bg='#e8eaed', fg='#202124', bd=1,
-                 cursor='arrow', relief='raised', padx=8, pady=2,
-                 state=tk.DISABLED,
-                 command=self._on_cluster_next_page).pack(side=tk.LEFT)
-
-        # 存储查询结果
-        self.cluster_all_data = []  # 所有数据（翻页用）
-        self.cluster_current_page = 1
-        self.cluster_total_pages = 1
-        self.cluster_total_count = 0
-        self.cluster_is_querying = False
-        self.cluster_problem_labels = []
-
     def _build_bottom_section(self, parent):
         """构建底部日志区域"""
         # 直接使用 Frame 作为容器，填满所有剩余空间
@@ -926,283 +596,6 @@ class NqiToolGUI:
         handler = LogTextHandler(self.log_text)
         handler.setLevel(logging.INFO)
         self.logger.addHandler(handler)
-
-    def _on_cluster_city_changed(self, event=None):
-        """地市选择改变时触发"""
-        city_name = self.cluster_city_var.get()
-        self.logger.info("[聚类工单] 选择地市: %s", city_name)
-
-    def _load_cluster_problem_labels(self):
-        """加载问题标签列表"""
-        if not self.session:
-            messagebox.showwarning("提示", "请先登录后再操作")
-            return
-
-        start_date = self.cluster_start_var.get()
-        end_date = self.cluster_end_var.get()
-
-        if not start_date or not end_date:
-            messagebox.showwarning("提示", "请选择日期范围")
-            return
-
-        self.logger.info("[聚类工单] 正在加载问题标签...")
-        self.cluster_load_labels_btn.config(state=tk.DISABLED)
-
-        def do_load():
-            try:
-                from core.query import ClusterOrderQuery
-                cluster_query = ClusterOrderQuery(self.session)
-                labels = cluster_query.get_problem_labels(start_date, end_date)
-
-                self.root.after(0, lambda: self._on_problem_labels_loaded(labels))
-            except Exception as e:
-                self.root.after(0, lambda: self._on_problem_labels_loaded([]))
-                self.logger.error("[聚类工单] 加载问题标签失败: %s", str(e))
-
-        threading.Thread(target=do_load, daemon=True).start()
-
-    def _on_problem_labels_loaded(self, labels):
-        """问题标签加载完成"""
-        self.cluster_load_labels_btn.config(state=tk.NORMAL)
-
-        if labels:
-            self.logger.info("[聚类工单] 加载到 %d 个问题标签", len(labels))
-            self.cluster_problem_labels = labels
-            # 可以在界面上显示已加载
-            self.cluster_problem_type_entry.config(foreground='#333333')
-        else:
-            self.logger.warning("[聚类工单] 未获取到问题标签")
-            self.cluster_problem_labels = []
-
-    def _on_cluster_query(self):
-        """执行聚类工单查询"""
-        if not self.session:
-            messagebox.showwarning("提示", "请先登录后再操作")
-            return
-
-        if self.cluster_is_querying:
-            return
-
-        start_date = self.cluster_start_var.get()
-        end_date = self.cluster_end_var.get()
-        city_name = self.cluster_city_var.get()
-        city_code = self.CITY_CODE_MAP.get(city_name, '')
-
-        if not start_date or not end_date:
-            messagebox.showwarning("提示", "请选择日期范围")
-            return
-
-        # 收集查询参数
-        params = {
-            'timeType': self.cluster_time_type_var.get(),
-            'start_date': start_date,
-            'end_date': end_date,
-            'city': city_code,
-            'area_grid': self.cluster_grid_var.get(),
-            'problem_status': self.cluster_status_var.get(),
-            'rows': 100,
-            'page': 1
-        }
-
-        # 添加详细问题类型
-        problem_type = self.cluster_problem_type_var.get().strip()
-        if problem_type:
-            params['detailed_type'] = [problem_type]
-
-        self.cluster_is_querying = True
-        self.cluster_query_btn.config(state=tk.DISABLED, text="查询中...")
-        self.cluster_stop_btn.config(state=tk.NORMAL)
-
-        # 清空之前的结果
-        for item in self.cluster_tree.get_children():
-            self.cluster_tree.delete(item)
-
-        self.logger.info("[聚类工单] 开始查询: %s - %s", start_date, end_date)
-
-        def do_query():
-            try:
-                from core.query import ClusterOrderQuery
-                cluster_query = ClusterOrderQuery(self.session)
-
-                def progress_callback(current, total, message):
-                    self.root.after(0, lambda m=message: self._update_cluster_progress(m, current, total))
-
-                result = cluster_query.query_orders(params, progress_callback)
-                self.root.after(0, lambda: self._on_cluster_query_done(result))
-
-            except Exception as e:
-                self.logger.error("[聚类工单] 查询异常: %s", str(e))
-                self.root.after(0, lambda: self._on_cluster_query_done({'rows': [], 'total': 0}))
-
-        threading.Thread(target=do_query, daemon=True).start()
-
-    def _update_cluster_progress(self, message, current, total):
-        """更新聚类工单查询进度"""
-        self.progress_lbl_detail.config(text=message)
-        if total > 0:
-            pct = int(current / total * 100) if total > 0 else 0
-            self.progress_lbl_pct.config(text=f"进度: {pct}%")
-
-    def _on_cluster_query_done(self, result):
-        """聚类工单查询完成"""
-        self.cluster_is_querying = False
-        self.cluster_query_btn.config(state=tk.NORMAL, text="🔍 查询")
-        self.cluster_stop_btn.config(state=tk.DISABLED)
-
-        rows = result.get('rows', [])
-        total = result.get('total', 0)
-        total_pages = result.get('total_pages', 1)
-
-        self.cluster_all_data = rows
-        self.cluster_total_count = total
-        self.cluster_total_pages = total_pages
-        self.cluster_current_page = 1
-
-        self.logger.info("[聚类工单] 查询完成: 共 %d 条数据", total)
-
-        # 更新分页信息
-        self.cluster_page_label.config(text=f"第 1 / {max(1, total_pages)} 页，共 {total} 条")
-
-        # 显示数据
-        self._display_cluster_page()
-
-        # 启用导出按钮
-        if rows:
-            self.cluster_export_btn.config(state=tk.NORMAL)
-
-    def _display_cluster_page(self):
-        """显示当前页的数据"""
-        # 清空表格
-        for item in self.cluster_tree.get_children():
-            self.cluster_tree.delete(item)
-
-        # 显示当前页数据（每页最多100条）
-        page_size = 100
-        start_idx = (self.cluster_current_page - 1) * page_size
-        end_idx = start_idx + page_size
-        page_data = self.cluster_all_data[start_idx:end_idx]
-
-        for i, row in enumerate(page_data):
-            seq = start_idx + i + 1
-            values = [
-                str(seq),
-                row.get('聚类工单序号', ''),
-                row.get('问题小区', ''),
-                row.get('问题小区名', ''),
-                row.get('地市', ''),
-                row.get('责任网格', ''),
-                row.get('派发时间', ''),
-                row.get('问题点类型', ''),
-                row.get('方案类型', ''),
-                row.get('方案描述', ''),
-                row.get('方案确认人', ''),
-                row.get('评估状态', ''),
-                row.get('当前状态', ''),
-                row.get('问题原因', ''),
-                row.get('数据来源', '')
-            ]
-            self.cluster_tree.insert('', tk.END, values=values)
-
-    def _on_cluster_prev_page(self):
-        """上一页"""
-        if self.cluster_current_page > 1:
-            self.cluster_current_page -= 1
-            self._display_cluster_page()
-            self.cluster_page_label.config(
-                text=f"第 {self.cluster_current_page} / {self.cluster_total_pages} 页，共 {self.cluster_total_count} 条"
-            )
-
-    def _on_cluster_next_page(self):
-        """下一页"""
-        if self.cluster_current_page < self.cluster_total_pages:
-            self.cluster_current_page += 1
-            self._display_cluster_page()
-            self.cluster_page_label.config(
-                text=f"第 {self.cluster_current_page} / {self.cluster_total_pages} 页，共 {self.cluster_total_count} 条"
-            )
-
-    def _on_cluster_export(self):
-        """导出聚类工单数据"""
-        if not self.cluster_all_data:
-            messagebox.showwarning("提示", "没有数据可导出")
-            return
-
-        from tkinter import filedialog
-        import pandas as pd
-
-        file_path = filedialog.asksaveasfilename(
-            title="保存聚类工单数据",
-            defaultextension=".xlsx",
-            filetypes=[("Excel文件", "*.xlsx"), ("CSV文件", "*.csv")],
-            initialfile=f"聚类工单_{self.cluster_start_var.get()}_{self.cluster_end_var.get()}.xlsx"
-        )
-
-        if not file_path:
-            return
-
-        self.logger.info("[聚类工单] 正在导出数据到: %s", file_path)
-
-        try:
-            # 清理HTML内容
-            import re
-            def clean_html(text):
-                if not isinstance(text, str):
-                    return text
-                # 移除HTML链接
-                text = re.sub(r'<a[^>]*>([^<]*)</a>', r'\1', text)
-                text = re.sub(r'<[^>]+>', '', text)
-                return text.strip()
-
-            # 构建DataFrame
-            df_data = []
-            for i, row in enumerate(self.cluster_all_data):
-                df_data.append({
-                    '序号': i + 1,
-                    '聚类工单序号': clean_html(row.get('聚类工单序号', '')),
-                    '问题小区': clean_html(row.get('问题小区', '')),
-                    '问题小区名': clean_html(row.get('问题小区名', '')),
-                    '地市': clean_html(row.get('地市', '')),
-                    '责任网格': clean_html(row.get('责任网格', '')),
-                    '派发时间': clean_html(row.get('派发时间', '')),
-                    '问题类型': clean_html(row.get('问题点类型', '')),
-                    '方案类型': clean_html(row.get('方案类型', '')),
-                    '方案描述': clean_html(row.get('方案描述', '')),
-                    '方案确认人': clean_html(row.get('方案确认人', '')),
-                    '评估状态': clean_html(row.get('评估状态', '')),
-                    '当前状态': clean_html(row.get('当前状态', '')),
-                    '问题原因': clean_html(row.get('问题原因', '')),
-                    '数据来源': clean_html(row.get('数据来源', ''))
-                })
-
-            df = pd.DataFrame(df_data)
-
-            if file_path.endswith('.xlsx'):
-                df.to_excel(file_path, index=False, engine='openpyxl')
-            else:
-                df.to_csv(file_path, index=False, encoding='utf-8-sig')
-
-            self.logger.info("[聚类工单] 导出成功: %s (%d 条)", file_path, len(df))
-            messagebox.showinfo("成功", f"导出成功！\n共 {len(df)} 条数据\n保存至: {file_path}")
-
-        except Exception as e:
-            self.logger.error("[聚类工单] 导出失败: %s", str(e))
-            messagebox.showerror("错误", f"导出失败: {str(e)}")
-
-    def _on_cluster_stop(self):
-        """停止聚类工单查询"""
-        self.cluster_is_querying = False
-        self.cluster_query_btn.config(state=tk.NORMAL, text="🔍 查询")
-        self.cluster_stop_btn.config(state=tk.DISABLED)
-        self.logger.info("[聚类工单] 查询已停止")
-
-    def _on_cluster_open_browser(self):
-        """在浏览器中打开聚类工单页面"""
-        import webbrowser
-        from utils.config import BASE_URL
-
-        url = f"{BASE_URL}/pro-ltemr-cicd/modules/ltescheme/unify/disquery/showgis.jsp"
-        self.logger.info("[聚类工单] 正在浏览器中打开: %s", url)
-        webbrowser.open(url)
 
     def _update_license_display(self):
         """更新授权时间显示"""
@@ -1273,18 +666,6 @@ F1        - 显示此帮助
             self.jxcx.cancel_query()
             self.log("已发送取消请求...", "WARNING")
 
-    def _on_time_rollback(self):
-        """检测到时间回拨时的处理 - 后台静默执行"""
-        # 写入过期的license
-        invalidate_license()
-        # 强制退出程序
-        self.root.after(0, self._force_exit)
-
-    def _force_exit(self):
-        """强制退出程序"""
-        import os
-        os._exit(1)
-
     def _update_login_failed_ui(self):
         """批量更新登录失败UI"""
         self.status_text.config(text="登录失败")
@@ -1315,44 +696,6 @@ F1        - 显示此帮助
         for var in self.category_vars.values():
             var.set(0)
         self.log("已取消全选", "INFO")
-
-    def _on_search_focus_in(self, event):
-        """搜索框获取焦点"""
-        if self.table_search_entry.get() == "搜索报表...":
-            self.table_search_entry.delete(0, tk.END)
-            self.table_search_entry.config(foreground='black')
-
-    def _on_search_focus_out(self, event):
-        """搜索框失去焦点"""
-        if not self.table_search_entry.get():
-            self.table_search_entry.insert(0, "搜索报表...")
-            self.table_search_entry.config(foreground='gray')
-            # 恢复所有表格
-            self.table_dropdown = MultiSelectDropdown(
-                None,
-                self._all_tables,
-                width=22,
-                select_all=False
-            )
-
-    def _on_table_search(self, event):
-        """搜索过滤表格"""
-        search_text = self.table_search_var.get().lower()
-        if search_text == "搜索报表...":
-            return
-
-        if not search_text:
-            # 恢复所有表格
-            self._filtered_tables = self._all_tables.copy()
-        else:
-            # 过滤表格
-            self._filtered_tables = [t for t in self._all_tables if search_text in t.lower()]
-
-        # 重建下拉框
-        # 注意：这里需要重建下拉框内容，但由于 MultiSelectDropdown 的限制
-        # 我们暂时在日志中提示搜索结果
-        if search_text:
-            self.log(f"搜索 '{search_text}': 找到 {len(self._filtered_tables)} 个匹配报表", "INFO")
 
     def _on_multi_day_toggle(self):
         """按日查询切换事件"""
@@ -1387,7 +730,7 @@ F1        - 显示此帮助
             return
 
         selected_tables = self.table_dropdown.get_selected()
-        if not selected_tables:
+        if not selected_tables or not selected_tables[0]:
             messagebox.showwarning("警告", "请先选择数据表")
             return
 
@@ -1816,7 +1159,7 @@ F1        - 显示此帮助
                             df = self.jxcx.get_table(gongcan_payload, report_name=table_name)
                             if not df.empty:
                                 filename = f"{table_name}.xlsx"
-                                filepath = export_with_format(df, filename, table_name)
+                                filepath = export_to_excel(df, filename, table_name)
                                 if filepath:
                                     self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
                                 else:
@@ -1885,7 +1228,7 @@ F1        - 显示此帮助
                                             except Exception as e:
                                                 self.log(f"  [计算列] {query_date} 计算列添加异常: {e}", "WARNING")
                                         day_filename = f"{table_name}_{query_date}.xlsx"
-                                        day_filepath = export_with_format(df, day_filename, table_name)
+                                        day_filepath = export_to_excel(df, day_filename, table_name)
                                         if day_filepath:
                                             self.log(f"  {query_date}: {len(df)} 条数据 -> {os.path.basename(day_filepath)}", "SUCCESS")
                                         all_dfs.append(df)
@@ -1900,7 +1243,7 @@ F1        - 显示此帮助
                         if not multi_day_per_sheet and all_dfs:
                             combined_df = pd.concat(all_dfs, ignore_index=True)
                             day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                            combined_filepath = export_with_format(combined_df, day_filename, table_name)
+                            combined_filepath = export_to_excel(combined_df, day_filename, table_name)
                             if combined_filepath:
                                 self.log(f"按日查询导出完成: {os.path.basename(combined_filepath)} ({len(combined_df)} 条)", "SUCCESS")
 
@@ -1934,7 +1277,7 @@ F1        - 显示此帮助
                                         self.log(f"[计算列] {table_name} 计算列添加异常: {e}", "ERROR")
 
                                 filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                                filepath = export_with_format(df, filename, table_name)
+                                filepath = export_to_excel(df, filename, table_name)
                                 if filepath:
                                     self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
                                 else:
@@ -1992,7 +1335,7 @@ F1        - 显示此帮助
                         if not df.empty:
                             self._apply_custom_fields(df, table_name)
                             filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                            filepath = export_with_format(df, filename, table_name)
+                            filepath = export_to_excel(df, filename, table_name)
                             if filepath:
                                 self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
                             else:
@@ -2045,7 +1388,7 @@ F1        - 显示此帮助
                                 if multi_day_per_sheet:
                                     # 按日分Sheet模式：每天一个Sheet
                                     day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                                    day_filepath = export_with_format(
+                                    day_filepath = export_to_excel(
                                         df, day_filename,
                                         sheet_name=query_date.replace('-', '')
                                     )
@@ -2055,7 +1398,7 @@ F1        - 显示此帮助
                                 else:
                                     # 按日分文件模式：每天一个文件
                                     day_filename = f"{table_name}_{query_date}.xlsx"
-                                    day_filepath = export_with_format(df, day_filename, table_name)
+                                    day_filepath = export_to_excel(df, day_filename, table_name)
                                     if day_filepath:
                                         self.log(f"  {query_date}: {len(df)} 条数据 -> {os.path.basename(day_filepath)}", "SUCCESS")
                                     all_dfs.append(df)
@@ -2070,7 +1413,7 @@ F1        - 显示此帮助
                     if not multi_day_per_sheet and all_dfs:
                         combined_df = pd.concat(all_dfs, ignore_index=True)
                         day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                        combined_filepath = export_with_format(combined_df, day_filename, table_name)
+                        combined_filepath = export_to_excel(combined_df, day_filename, table_name)
                         if combined_filepath:
                             self.log(f"按日查询导出完成: {os.path.basename(combined_filepath)} ({len(combined_df)} 条)", "SUCCESS")
 
@@ -2100,7 +1443,7 @@ F1        - 显示此帮助
                         if not df.empty:
                             self._apply_custom_fields(df, table_name)
                             filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                            filepath = export_with_format(df, filename, table_name)
+                            filepath = export_to_excel(df, filename, table_name)
                             if filepath:
                                 self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
                             else:
@@ -2135,58 +1478,23 @@ F1        - 显示此帮助
         return df
 
     def _export_multi_sheet(self, filename, sheets_data, default_sheet):
-        """导出多Sheet的Excel文件
+        """导出多Sheet的Excel文件（快速模式）
 
         Args:
             filename: 文件名
             sheets_data: list of (sheet_name, DataFrame) tuples
             default_sheet: 默认工作表名称
         """
-        import pandas as pd
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
         ensure_dirs()
         filepath = os.path.join(OUTPUT_DIR, filename)
 
-        wb = Workbook()
-        wb.remove(wb.active)  # 移除默认sheet
-
-        thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-        header_fill = PatternFill(start_color='165DFF', end_color='165DFF', fill_type='solid')
-        header_font = Font(bold=True, color='FFFFFF', size=11)
-        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-
-        for sheet_name, df in sheets_data:
-            ws = wb.create_sheet(title=str(sheet_name)[:31])  # Sheet名最多31字符
-            ws.append(list(df.columns))
-
-            for cell in ws[1]:
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = header_alignment
-                cell.border = thin_border
-
-            for row in df.itertuples(index=False):
-                ws.append(list(row))
-
-            for column in ws.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except (AttributeError, TypeError):
-                        pass
-                ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
-
-        wb.save(filepath)
+        try:
+            with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+                for sheet_name, df in sheets_data:
+                    df.to_excel(writer, sheet_name=str(sheet_name)[:31], index=False)
+            logger.info("多Sheet导出完成: %s (%d个Sheet)", filepath, len(sheets_data))
+        except Exception as e:
+            logger.error("多Sheet导出失败: %s", e)
 
     def _query_4g_voice_table(self, table_config, start_date, end_date, city,
                                multi_day, multi_day_per_sheet):
@@ -2273,7 +1581,7 @@ F1        - 显示此帮助
                     else:
                         # 按日分文件模式：每天一个文件
                         filename = f"4G语音小区_{query_date}.xlsx"
-                        filepath = export_with_format(merged_df, filename, "4G语音小区")
+                        filepath = export_to_excel(merged_df, filename, "4G语音小区")
                         if filepath:
                             self.log(f"  {query_date}: {len(merged_df)} 条数据 -> {os.path.basename(filepath)}", "SUCCESS")
 
@@ -2313,7 +1621,7 @@ F1        - 显示此帮助
                     self.log(f"添加计算列异常: {e}", "WARNING")
 
                 filename = f"4G语音小区_{start_date}_{end_date}.xlsx"
-                filepath = export_with_format(merged_df, filename, "4G语音小区")
+                filepath = export_to_excel(merged_df, filename, "4G语音小区")
                 if filepath:
                     self.log(f"4G语音小区数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
             else:
@@ -2506,7 +1814,7 @@ F1        - 显示此帮助
             bad_volte_count = volte_is_bad.sum()
             self.log(f"[4G语音计算] VoLTE差小区数量: {bad_volte_count}", "INFO")
         else:
-            volte_is_bad = pd.Series([False] * len(df))
+            volte_is_bad = np.full(len(df), False, dtype=bool)
             self.log(f"[4G语音计算] 无法计算VoLTE差小区（缺少字段）", "WARNING")
 
         if epsfb_bad_rate is not None and epsfb_call is not None:
@@ -2514,7 +1822,7 @@ F1        - 显示此帮助
             bad_epsfb_count = epsfb_is_bad.sum()
             self.log(f"[4G语音计算] EPSFB差小区数量: {bad_epsfb_count}", "INFO")
         else:
-            epsfb_is_bad = pd.Series([False] * len(df))
+            epsfb_is_bad = np.full(len(df), False, dtype=bool)
             self.log(f"[4G语音计算] 无法计算EPSFB差小区（缺少字段）", "WARNING")
 
         df['4G语音差小区'] = np.where(volte_is_bad | epsfb_is_bad, '是', '否')
@@ -2899,232 +2207,7 @@ F1        - 显示此帮助
 
     def _on_closing(self):
         """窗口关闭事件"""
-        if hasattr(self, '_time_monitor'):
-            self._time_monitor.stop()
         self.root.destroy()
-
-    def _show_activate_window(self):
-        """显示用户码激活窗口（新融合方案）"""
-        # 获取本机机器码
-        hw_info = get_hw_info()
-        machine_code = generate_machine_code(hw_info)
-
-        # 创建激活窗口
-        activate_win = tk.Toplevel(self.root)
-        activate_win.title("授权激活")
-        activate_win.geometry("600x450")
-        activate_win.resizable(False, False)
-
-        # 设置窗口在主窗口中间
-        self.root.update_idletasks()
-        x = (self.root.winfo_width() - 600) // 2 + self.root.winfo_x()
-        y = (self.root.winfo_height() - 450) // 2 + self.root.winfo_y()
-        activate_win.geometry(f"600x450+{x}+{y}")
-
-        activate_win.transient(self.root)
-        activate_win.grab_set()
-
-        # 顶部标题
-        header = tk.Frame(activate_win, bg='#165DFF', height=50)
-        header.pack(fill=tk.X)
-        header.pack_propagate(False)
-
-        tk.Label(header, text="🎫 授权激活",
-                font=('Microsoft YaHei UI', 16, 'bold'),
-                bg='#165DFF', fg='white').pack(pady=12)
-
-        # 主内容
-        content = tk.Frame(activate_win, bg='#f9fafb')
-        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-
-        # 本机信息卡片
-        info_card = tk.Frame(content, bg='white')
-        info_card.pack(fill=tk.X, pady=(0, 15))
-
-        tk.Label(info_card, text="📋 本机信息",
-                font=('Microsoft YaHei UI', 12, 'bold'),
-                bg='white', fg='#374151', anchor='w').pack(padx=15, pady=(12, 5))
-
-        machine_frame = tk.Frame(info_card, bg='white')
-        machine_frame.pack(fill=tk.X, padx=15, pady=(0, 12))
-
-        tk.Label(machine_frame, text="机器码：",
-                font=('Microsoft YaHei UI', 9, 'bold'),
-                bg='white', fg='#5f6368').pack(side=tk.LEFT)
-
-        machine_code_label = tk.Label(machine_frame, text=machine_code,
-                                    font=('Consolas', 8),
-                                    bg='white', fg='#5f6368')
-        machine_code_label.pack(side=tk.LEFT, padx=(5, 0))
-
-        tk.Button(machine_frame, text="📋 复制",
-                font=('Microsoft YaHei UI', 8),
-                bg='#f0f2f5', fg='#202124', bd=1,
-                cursor='arrow', relief='raised', padx=8, pady=2,
-                command=lambda: self._copy_to_clipboard(activate_win, machine_code)).pack(side=tk.RIGHT)
-
-        # 当前授权状态卡片
-        status_card = tk.Frame(content, bg='white')
-        status_card.pack(fill=tk.X, pady=(0, 15))
-
-        tk.Label(status_card, text="📊 当前授权状态",
-                font=('Microsoft YaHei UI', 12, 'bold'),
-                bg='white', fg='#374151', anchor='w').pack(padx=15, pady=(12, 8))
-
-        status_frame = tk.Frame(status_card, bg='white')
-        status_frame.pack(fill=tk.X, padx=15, pady=(0, 12))
-
-        # 检查当前授权状态
-        info = get_user_code_info()
-        if info:
-            if info['days_left'] == -1:
-                status_text = f"✅ 已授权（永久）"
-                status_color = '#22c55e'
-            elif info['days_left'] > 0:
-                status_text = f"✅ 已授权（剩余 {info['days_left']} 天，到期 {info['expiry_date']}）"
-                status_color = '#22c55e'
-            else:
-                status_text = f"❌ 授权已过期（{info['expiry_date']}）"
-                status_color = '#ef4444'
-        else:
-            status_text = "❌ 未授权"
-            status_color = '#ef4444'
-
-        status_label = tk.Label(status_frame, text=status_text,
-                               font=('Microsoft YaHei UI', 10),
-                               bg='white', fg=status_color)
-        status_label.pack(anchor='w')
-
-        # 激活输入卡片
-        input_card = tk.Frame(content, bg='white')
-        input_card.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(input_card, text="🔑 输入用户码",
-                font=('Microsoft YaHei UI', 12, 'bold'),
-                bg='white', fg='#374151', anchor='w').pack(padx=15, pady=(12, 5))
-
-        tk.Label(input_card, text="请输入管理员提供的用户码：",
-                font=('Microsoft YaHei UI', 9),
-                bg='white', fg='#9ca3af', anchor='w').pack(padx=15, pady=(0, 8))
-
-        serial_frame = tk.Frame(input_card, bg='white')
-        serial_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
-
-        serial_entry = tk.Entry(serial_frame,
-                              font=('Consolas', 10),
-                              relief='flat', bg='#f8f9fa', bd=0)
-        serial_entry.pack(fill=tk.X, ipady=8)
-
-        tk.Label(serial_frame, text="用户码为 Base64 编码的字符串（由管理员生成）",
-                font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#9ca3af').pack(anchor='w', pady=(4, 0))
-
-        # 按钮
-        btn_frame = tk.Frame(content, bg='#f9fafb')
-        btn_frame.pack(fill=tk.X, pady=(15, 0))
-
-        activate_btn = tk.Button(btn_frame, text="✅ 激活授权",
-                 font=('Microsoft YaHei UI', 11, 'bold'),
-                 bg='#22c55e', fg='white', bd=1,
-                 cursor='hand2', relief='raised', padx=25, pady=8,
-                 command=lambda: self._do_activate(serial_entry.get(), machine_code, activate_win))
-        activate_btn.pack(side=tk.LEFT)
-
-        # 注销按钮（如果已授权）
-        if info:
-            tk.Button(btn_frame, text="注销授权",
-                     font=('Microsoft YaHei UI', 10),
-                     bg='#fee2e2', fg='#dc2626', bd=1,
-                     cursor='arrow', relief='raised', padx=18, pady=8,
-                     command=lambda: self._do_deactivate(activate_win)).pack(side=tk.LEFT, padx=(10, 0))
-
-        tk.Button(btn_frame, text="取消",
-                 font=('Microsoft YaHei UI', 10),
-                 bg='#f0f2f5', fg='#202124', bd=1,
-                 cursor='arrow', relief='raised', padx=18, pady=8,
-                 command=activate_win.destroy).pack(side=tk.RIGHT)
-
-        serial_entry.focus()
-
-        # 回车激活
-        serial_entry.bind('<Return>', lambda e: activate_btn.invoke())
-
-    def _do_activate(self, user_code, machine_code, window):
-        """执行激活操作（新融合方案）
-
-        流程：
-        1. 解析用户码
-        2. 验证机器码匹配
-        3. 保存用户码
-        """
-        user_code = user_code.strip()
-        if not user_code:
-            messagebox.showwarning("提示", "请输入用户码")
-            return
-
-        # 导入解密函数进行验证
-        from core.license import decrypt_user_code
-
-        # 验证用户码
-        success, expiry_timestamp, auth_machine_code = decrypt_user_code(user_code)
-
-        if not success:
-            messagebox.showerror("激活失败", "用户码格式错误或解密失败，请检查是否复制完整")
-            return
-
-        # 验证机器码匹配
-        if auth_machine_code != machine_code:
-            messagebox.showerror("激活失败", "用户码与本机机器码不匹配\n\n请确认您使用的是本机的用户码")
-            return
-
-        # 检查是否过期
-        if expiry_timestamp != 0:
-            from datetime import datetime as dt
-            expiry_date = dt.fromtimestamp(expiry_timestamp).strftime('%Y-%m-%d')
-            if expiry_timestamp < int(time.time()):
-                messagebox.showerror("激活失败", f"用户码已过期（{expiry_date}）")
-                return
-
-        # 保存用户码
-        if save_user_code(user_code):
-            window.destroy()
-            days_left = "永久" if expiry_timestamp == 0 else f"剩余 {(expiry_timestamp - int(time.time())) // 86400} 天"
-            messagebox.showinfo("成功", f"授权激活成功！\n\n到期时间：{expiry_date if expiry_timestamp != 0 else '永久'}\n状态：{days_left}")
-            # 重新加载授权信息
-            self._reload_license()
-        else:
-            messagebox.showerror("错误", "保存用户码失败")
-
-    def _do_deactivate(self, window):
-        """注销授权"""
-        if messagebox.askyesno("确认注销", "确定要注销当前授权吗？\n注销后需要重新激活才能使用。"):
-            if delete_user_code():
-                window.destroy()
-                messagebox.showinfo("成功", "授权已注销")
-                self._reload_license()
-            else:
-                messagebox.showerror("错误", "注销授权失败")
-
-    def _reload_license(self):
-        """重新加载授权信息"""
-        # 重新验证授权
-        hw_info = get_hw_info()
-        machine_code = generate_machine_code(hw_info)
-
-        valid, result = verify_with_user_code(machine_code)
-
-        if valid:
-            # 更新过期时间显示
-            if result['days_left'] == -1:
-                self.expiry_time = datetime(2099, 12, 31)  # 永久
-            else:
-                self.expiry_time = datetime.fromtimestamp(result['expiry_timestamp'])
-            self._update_license_display()
-            self.status_text.config(text="系统就绪")
-            self.status_dot.config(fg='#22c55e')
-            self.activate_btn.config(bg='#22c55e')  # 绿色表示已激活
-        else:
-            self.activate_btn.config(bg='#f59e0b')  # 橙色表示需要激活
 
     def _copy_to_clipboard(self, window, text):
         """复制到剪贴板"""

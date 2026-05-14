@@ -21,7 +21,7 @@ from utils.excel_styler import ExcelStyler
 logger = logging.getLogger(__name__)
 
 
-def export_to_excel(data, filename, sheet_name='Sheet1', append=False):
+def export_to_excel(data, filename, sheet_name='Sheet1', append=False, apply_format=False):
     """导出数据到Excel文件
 
     Args:
@@ -29,6 +29,7 @@ def export_to_excel(data, filename, sheet_name='Sheet1', append=False):
         filename: 文件名
         sheet_name: 工作表名称
         append: 是否追加模式（多个sheet写入同一文件）
+        apply_format: 是否应用格式化（会降低性能，大数据建议设为False）
 
     Returns:
         str: 导出文件的完整路径
@@ -50,15 +51,20 @@ def export_to_excel(data, filename, sheet_name='Sheet1', append=False):
     filepath = os.path.join(OUTPUT_DIR, filename)
 
     try:
-        if append and os.path.exists(filepath):
-            with pd.ExcelWriter(filepath, engine='openpyxl', mode='a') as writer:
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-            logger.info("已追加数据到 %s", filepath)
+        if apply_format:
+            # 使用格式化导出（性能较慢，但格式更好）
+            return export_with_format(df, filename, sheet_name)
         else:
-            df.to_excel(filepath, sheet_name=sheet_name, index=False, engine='openpyxl')
-            logger.info("数据已导出到 %s", filepath)
+            # 快速导出模式：直接写入，不加载/重新保存
+            if append and os.path.exists(filepath):
+                with pd.ExcelWriter(filepath, engine='openpyxl', mode='a') as writer:
+                    df.to_excel(writer, sheet_name=sheet_name, index=False)
+                logger.info("已追加数据到 %s", filepath)
+            else:
+                df.to_excel(filepath, sheet_name=sheet_name, index=False, engine='openpyxl')
+                logger.info("数据已快速导出到 %s (%d行 x %d列)", filepath, len(df), len(df.columns))
 
-        return filepath
+            return filepath
 
     except Exception as e:
         logger.error("导出失败: %s", e)

@@ -37,52 +37,164 @@ from gui.payload_templates import (
 
 
 class LogTextHandler(logging.Handler):
-    """日志处理器 - 将简洁日志输出到界面Text组件"""
+    """日志处理器 - 将简洁日志输出到界面Text组件（优化版）
 
-    def __init__(self, text_widget):
+    优化点：
+    1. 批量写入：使用队列缓存日志，批量写入减少UI线程压力
+    2. 减少滚动：只在必要时滚动到底部
+    3. 预定义标签：避免每次都调用 tag_config
+    4. 防抖机制：合并短时间内的多次写入
+    """
+
+    # 预定义的标签颜色
+    COLOR_MAP = {
+        'WARNING': '#FFA500',
+        'ERROR': '#FF0000',
+        'CRITICAL': '#FF0000',
+        'INFO': '#333333',
+        'SUCCESS': '#00AA00',
+    }
+
+    def __init__(self, text_widget, batch_interval=50, max_lines=500):
+        """
+        Args:
+            text_widget: tk.Text 组件
+            batch_interval: 批量写入间隔（毫秒），默认50ms
+            max_lines: 最大保留行数，默认500行
+        """
         super().__init__()
         self.text_widget = text_widget
         self.setLevel(logging.INFO)
         self.formatter = logging.Formatter('%(message)s')
+        self.batch_interval = batch_interval
+        self.max_lines = max_lines
+
+        # 批量写入相关
+        self._pending_messages = []  # 待写入的消息队列
+        self._after_id = None       # 定时器ID
+        self._last_scroll_pos = 1.0  # 上次滚动位置（1.0=底部）
+
+        # 预定义所有标签（避免运行时创建）
+        self._setup_tags()
+
+        # 绑定滚动事件，检测用户是否在底部
+        self.text_widget.bind('<Configure>', self._on_widget_configure)
+        self.text_widget.bind('<MouseWheel>', self._on_scroll)
+        self.text_widget.bind('<ButtonPress>', self._on_scroll)
+        self.text_widget.bind('<KeyRelease>', self._on_scroll)
+
+    def _setup_tags(self):
+        """预定义所有标签样式"""
+        for name, color in self.COLOR_MAP.items():
+            self.text_widget.tag_configure(name, foreground=color)
+
+    def _on_widget_configure(self, event=None):
+        """检测组件大小变化"""
+        pass
+
+    def _on_scroll(self, event=None):
+        """用户滚动时记录位置"""
+        try:
+            # 获取当前滚动位置
+            scrollinfo = self.text_widget.yview()
+            self._last_scroll_pos = scrollinfo[1]  # 记录底部位置
+        except Exception:
+            pass
 
     def emit(self, record):
+        """接收日志记录"""
         if record.levelno < logging.INFO:
             return
 
-        msg = self.formatter.format(record)
-        if not msg.endswith('\n'):
-            msg += '\n'
-
-        def append():
-            self.text_widget.configure(state='normal')
-            self.text_widget.insert(tk.END, msg)
-
-            color_map = {
-                'WARNING': '#FFA500',
-                'ERROR': '#FF0000',
-                'CRITICAL': '#FF0000'
-            }
-
-            tag_name = f'tag_{record.levelname}'
-            self.text_widget.tag_config(tag_name, foreground=color_map.get(record.levelname, '#333333'))
-
-            last_line_num = self.text_widget.index(tk.END).split('.')[0]
-            start_idx = f'{int(last_line_num)-1}.0'
-            end_idx = f'{last_line_num}.end'
-            self.text_widget.tag_add(tag_name, start_idx, end_idx)
-
-            self.text_widget.see(tk.END)
-            self.text_widget.configure(state='disabled')
-
-            max_lines = 1000
-            current_lines = int(self.text_widget.index(tk.END).split('.')[0])
-            if current_lines > max_lines:
-                self.text_widget.delete('1.0', f'{current_lines - max_lines}.0')
-
         try:
-            self.text_widget.after(0, append)
+            msg = self.formatter.format(record)
+            if not msg.endswith('\n'):
+                msg += '\n'
+
+            levelname = record.levelname
+            if levelname not in self.COLOR_MAP:
+                levelname = 'INFO'
+
+            # 缓存消息
+            self._pending_messages.append((msg, levelname))
+
+            # 如果没有待执行的定时器，设置一个新的
+            if self._after_id is None:
+                self._after_id = self.text_widget.after(
+                    self.batch_interval,
+                    self._flush
+                )
         except Exception:
             pass
+
+    def _flush(self):
+        """批量写入消息到 Text 组件"""
+        if not self._pending_messages:
+            self._after_id = None
+            return
+
+        # 取出所有待写入消息
+        messages = self._pending_messages
+        self._pending_messages = []
+        self._after_id = None
+
+        try:
+            # 批量操作：先启用编辑
+            self.text_widget.configure(state='normal')
+
+            # 批量插入所有消息
+            for msg, levelname in messages:
+                # 获取当前末尾行号
+                end_line = self.text_widget.index(tk.END).split('.')[0]
+                start_idx = f'{int(end_line)}.0'
+
+                # 插入文本
+                self.text_widget.insert(tk.END, msg)
+
+                # 应用标签
+                end_idx = self.text_widget.index(tk.END)
+                self.text_widget.tag_add(levelname, start_idx, end_idx)
+
+            # 检查是否需要滚动到底部
+            # 只有当用户之前在底部时才自动滚动
+            if self._last_scroll_pos >= 0.99:
+                self.text_widget.see(tk.END)
+
+            # 限制行数：使用更高效的方式
+            self._trim_lines()
+
+            # 禁用编辑
+            self.text_widget.configure(state='disabled')
+
+        except Exception:
+            try:
+                self.text_widget.configure(state='disabled')
+            except Exception:
+                pass
+
+    def _trim_lines(self):
+        """修剪超过最大行数的旧日志"""
+        current_lines = int(self.text_widget.index(tk.END).split('.')[0]) - 1
+        if current_lines > self.max_lines:
+            # 计算要删除的行数
+            lines_to_delete = current_lines - self.max_lines
+            delete_end = f'{lines_to_delete}.0'
+            self.text_widget.delete('1.0', delete_end)
+
+    def flush(self):
+        """强制刷新所有待写入的消息"""
+        if self._after_id is not None:
+            try:
+                self.text_widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        self._flush()
+
+    def close(self):
+        """关闭处理器"""
+        self.flush()
+        super().close()
 
 
 class ScrolledTextFrame(ttk.Frame):
@@ -163,28 +275,69 @@ class DateEntry(ttk.Entry):
 
 
 class MultiSelectDropdown(ttk.Frame):
-    """带复选框的下拉选择组件"""
+    """带复选框的下拉选择组件（支持下拉滚动）"""
 
     GD_CITIES = ['广州', '深圳', '东莞', '佛山', '中山', '珠海', '江门', '肇庆',
                  '惠州', '汕头', '潮州', '揭阳', '汕尾', '湛江', '茂名', '阳江',
                  '云浮', '韶关', '梅州', '河源', '清远']
 
-    def __init__(self, parent, values, width=18, select_all=False):
+    def __init__(self, parent, values, width=18, select_all=False, max_dropdown_items=5):
         super().__init__(parent)
         self.values = values
         self.var_dict = {}
         self.var = tk.StringVar(value="")
         self._selected_order = []
+        self._max_dropdown_items = max_dropdown_items  # 下拉列表最大显示项数
+
+        # 输入框 + 下拉按钮
         self.entry = ttk.Entry(self, textvariable=self.var, width=width, state='readonly')
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.btn = ttk.Button(self, text="▼", width=3, command=self._toggle_dropdown)
         self.btn.pack(side=tk.LEFT)
+
+        # 创建下拉窗口
         self.dropdown = tk.Toplevel(self)
         self.dropdown.withdraw()
         self.dropdown.overrideredirect(True)
         self.dropdown.attributes('-topmost', True)
-        self.check_frame = ttk.Frame(self.dropdown)
-        self.check_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+
+        # 下拉内容区域（分为两部分：复选框列表 + 底部按钮）
+        # 复选框区域（带滚动条）
+        checkbox_area = ttk.Frame(self.dropdown)
+        checkbox_area.pack(fill=tk.X)
+
+        # 创建 Canvas + Scrollbar 实现滚动
+        self.check_canvas = tk.Canvas(checkbox_area, bg='white', highlightthickness=1,
+                                     highlightbackground='#cccccc', height=150)
+        scrollbar = ttk.Scrollbar(checkbox_area, orient="vertical",
+                                  command=self.check_canvas.yview)
+        self.check_canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.check_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # 可滚动的内部框架
+        self.check_frame = ttk.Frame(self.check_canvas)
+        self.check_canvas.create_window((0, 0), window=self.check_frame, anchor='nw')
+
+        # 绑定滚动区域配置
+        def on_frame_configure(event):
+            self.check_canvas.configure(scrollregion=self.check_canvas.bbox("all"))
+            # 动态设置 Canvas 高度，确保内容可见
+            frame_h = self.check_frame.winfo_reqheight()
+            canvas_h = min(frame_h, self._max_dropdown_items * 22 + 10)
+            self.check_canvas.configure(height=canvas_h)
+        self.check_frame.bind("<Configure>", on_frame_configure)
+
+        # 绑定鼠标滚轮事件
+        def on_mousewheel(event):
+            self.check_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+        self.check_canvas.bind("<MouseWheel>", on_mousewheel)
+        self.check_canvas.bind("<Enter>", lambda e: self.check_canvas.bind("<MouseWheel>", on_mousewheel))
+        self.check_canvas.bind("<Leave>", lambda e: self.check_canvas.unbind("<MouseWheel>"))
+
+        # 创建复选框
         self.check_vars = {}
         for val in values:
             var = tk.BooleanVar(value=False)
@@ -194,11 +347,14 @@ class MultiSelectDropdown(ttk.Frame):
                 command=lambda v=val: self._on_check_change(v)
             )
             cb.pack(anchor=tk.W, padx=5, pady=1)
+
+        # 底部按钮区域
         btn_frame = ttk.Frame(self.dropdown)
         btn_frame.pack(fill=tk.X, padx=2, pady=2)
         ttk.Button(btn_frame, text="全选", command=self._select_all).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text="取消", command=self._deselect_all).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text="确定", command=self._confirm).pack(side=tk.RIGHT, padx=2)
+
         if select_all:
             self._select_all()
 
@@ -210,27 +366,37 @@ class MultiSelectDropdown(ttk.Frame):
             self._show_dropdown()
 
     def _show_dropdown(self):
-        """显示下拉框"""
+        """显示下拉框（限制最大高度）"""
         self.dropdown.update_idletasks()
         entry_x = self.entry.winfo_rootx()
         entry_y = self.entry.winfo_rooty()
         entry_h = self.entry.winfo_height()
         dropdown_w = self.dropdown.winfo_reqwidth()
-        dropdown_h = self.dropdown.winfo_reqheight()
+
+        # 按钮区域高度 + padding
+        btn_height = 50
+        # Canvas 高度（固定值）
+        canvas_h = 150
+
+        dropdown_h = canvas_h + btn_height
+
         screen_w = self.dropdown.winfo_screenwidth()
         screen_h = self.dropdown.winfo_screenheight()
         space_below = screen_h - (entry_y + entry_h)
         space_above = entry_y
+
         if space_below >= dropdown_h or space_below >= space_above:
             y = entry_y + entry_h
         else:
             y = entry_y - dropdown_h
+            if y < 0:
+                y = 0
+
         if entry_x + dropdown_w > screen_w:
             x = screen_w - dropdown_w
         else:
             x = entry_x
-        if y < 0:
-            y = 0
+
         self.dropdown.geometry(f"{dropdown_w}x{dropdown_h}+{x}+{y}")
         self.dropdown.deiconify()
         self.dropdown.lift()
@@ -263,7 +429,12 @@ class MultiSelectDropdown(ttk.Frame):
         """确认选择"""
         selected = [val for val in self._selected_order if val in self.check_vars and self.check_vars[val].get()]
         if selected:
-            self.var.set(','.join(selected))
+            # 显示已选项（超过3项时显示"已选N项"，否则显示具体内容）
+            if len(selected) > 3:
+                display_text = f"已选 {len(selected)} 项"
+            else:
+                display_text = ','.join(selected)
+            self.var.set(display_text)
         else:
             self.var.set("")
         self.dropdown.withdraw()
@@ -280,7 +451,12 @@ class MultiSelectDropdown(ttk.Frame):
             if val in values:
                 self._selected_order.append(val)
         if values:
-            self.var.set(','.join(values))
+            # 显示已选项（超过3项时显示"已选N项"，否则显示具体内容）
+            if len(values) > 3:
+                display_text = f"已选 {len(values)} 项"
+            else:
+                display_text = ','.join(values)
+            self.var.set(display_text)
         else:
             self.var.set("")
 

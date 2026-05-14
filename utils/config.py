@@ -127,7 +127,8 @@ JXCX_TABLE_URL = f'{BASE_URL}/pro-adhoc/adhocquery/getSelectTable'
 # ========== 聚类工单查询API ==========
 LTESCHEME_BASE = f'{BASE_URL}/pro-ltemr-cicd/modules/disquery'
 GET_GRID_URL = f'{LTESCHEME_BASE}/getgrid'                           # 获取责任网格
-GET_PROBLEM_LABEL_URL = f'{LTESCHEME_BASE}/getproblemlabel'   # 获取问题标签
+GET_PROBLEM_LABEL_URL = f'{LTESCHEME_BASE}/getproblemlabel'           # 获取问题标签（旧接口）
+GET_PROBLEM_LABEL_BY_DATA_URL = f'{LTESCHEME_BASE}/getproblemlabelByData'  # 获取问题标签（带日期参数）
 QUERY_PROPOSAL_URL = f'{LTESCHEME_BASE}/queryProposal'               # 聚类工单查询主接口
 
 MAX_SINGLE_QUERY = 500000

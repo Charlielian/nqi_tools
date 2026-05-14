@@ -109,25 +109,22 @@ class ExcelStyler:
 
     @classmethod
     def auto_adjust_column_width(cls, worksheet, max_width=50, min_width=8):
-        """自动调整列宽
+        """自动调整列宽（优化版）
 
         Args:
             worksheet: openpyxl Worksheet对象
             max_width: 最大列宽
             min_width: 最小列宽
         """
+        # 优化：预先计算列宽，避免逐个cell遍历
         for column in worksheet.columns:
-            max_length = 0
             column_letter = get_column_letter(column[0].column)
-
-            for cell in column:
-                try:
-                    if cell.value:
-                        cell_length = len(str(cell.value))
-                        if cell_length > max_length:
-                            max_length = cell_length
-                except (AttributeError, TypeError):
-                    pass
+            # 使用列表推导式收集所有值的长度
+            try:
+                lengths = [len(str(cell.value)) for cell in column if cell.value is not None]
+                max_length = max(lengths) if lengths else 8
+            except (AttributeError, TypeError):
+                max_length = 8
 
             adjusted_width = min(max(max_length + 2, min_width), max_width)
             worksheet.column_dimensions[column_letter].width = adjusted_width
@@ -135,7 +132,7 @@ class ExcelStyler:
     @classmethod
     def format_worksheet(cls, worksheet, header_style='header_blue',
                          auto_width=True, max_col_width=50):
-        """格式化工作表
+        """格式化工作表（优化版）
 
         Args:
             worksheet: openpyxl Worksheet对象
@@ -154,12 +151,37 @@ class ExcelStyler:
             cell.alignment = header_align
             cell.border = header_border
 
-        # 格式化数据行
-        for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row):
-            for cell in row:
-                cell.alignment = cls.CENTER_ALIGNMENT
-                cell.border = cls.THIN_BORDER
-
-        # 自动调整列宽
+        # 优化：使用 iter_rows 批量处理数据行（比逐行迭代更快）
         if auto_width:
-            cls.auto_adjust_column_width(worksheet, max_width=max_col_width)
+            # 预收集每列的最大长度
+            col_max_lengths = {}
+            for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row):
+                for cell in row:
+                    try:
+                        col_idx = cell.column
+                        val_len = len(str(cell.value)) if cell.value is not None else 0
+                        if col_idx in col_max_lengths:
+                            if val_len > col_max_lengths[col_idx]:
+                                col_max_lengths[col_idx] = val_len
+                        else:
+                            col_max_lengths[col_idx] = val_len
+                    except (AttributeError, TypeError):
+                        pass
+
+            # 批量应用样式和设置列宽
+            for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row):
+                for cell in row:
+                    cell.alignment = cls.CENTER_ALIGNMENT
+                    cell.border = cls.THIN_BORDER
+
+            # 批量设置列宽
+            min_width = 8
+            for col_idx, max_len in col_max_lengths.items():
+                col_letter = get_column_letter(col_idx)
+                adjusted_width = min(max(max_len + 2, min_width), max_col_width)
+                worksheet.column_dimensions[col_letter].width = adjusted_width
+        else:
+            for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row):
+                for cell in row:
+                    cell.alignment = cls.CENTER_ALIGNMENT
+                    cell.border = cls.THIN_BORDER

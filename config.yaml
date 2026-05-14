@@ -2,8 +2,8 @@
 # 打包后，用户可以将此文件放在 EXE 同目录下覆盖默认配置
 
 auth:
-  username: 'XXXXX'
-  password: 'XXXX'
+  username: 'dwlianchangli'
+  password: 'Gmcc20262@@'
 
 paths:
   output_dir: './data_output'
