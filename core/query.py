@@ -95,14 +95,17 @@ def convert_where_conditions(conditions):
             datatype = 'character'  # 默认
             if 'time' in field.lower() or 'date' in field.lower():
                 datatype = 'timestamp'
-                # 时间格式处理 - 与浏览器保持一致，使用空格分隔而非加号
-                # 浏览器发送格式: "2026-04-26 00:00:00" 或 "2026-04-26 23:59:59"
+                # 时间格式处理 - 根据HAR抓包，浏览器实际使用的是空格分隔符
+                # 例如: "2026-04-26 00:00:00" 而非 "2026-04-26+00:00:00"
                 if ' ' not in value and '+' not in value:
                     # 纯日期格式，需要添加时间部分
                     if operator in ('>=', '>'):
                         value = value + ' 00:00:00'
                     elif operator in ('<=', '<', '='):
                         value = value + ' 23:59:59'
+                elif '+' in value:
+                    # 将加号替换为空格（兼容某些情况下传入的加号格式）
+                    value = value.replace('+', ' ')
                 # 结束时间使用 < 而非 <=（与浏览器保持一致）
                 if operator == '<=':
                     operator = '<'
@@ -1365,16 +1368,22 @@ class JXCXQuery:
             return pd.DataFrame() if to_df else {'data': []}
 
         # ========== 第二步：获取数据 ==========
+        # 与HAR请求格式一致：只包含必要的参数，不包含columns/order/search/draw/start/length/total
         report_logger.info("")
         report_logger.info("┌──────────────────────────────────────────────────────────────────┐")
         report_logger.info("│ Step 2: 获取数据内容                                              │")
         report_logger.info("├──────────────────────────────────────────────────────────────────┤")
         report_logger.info("│ 请求URL: %s", JXCX_URL)
-        report_logger.info("│ 请求参数: start=0, length=%d", total_count)
         report_logger.info("│ 预计超时时间: %ds", max(60, min(300, total_count // 1000 * 2)))
         report_logger.info("└──────────────────────────────────────────────────────────────────┘")
 
-        data_list = self._fetch_by_loop(payload, total_count, progress_callback)
+        # 构建与HAR一致的payload（不包含columns/order/search/draw/start/length/total）
+        data_payload = payload.copy()
+        key_list = ['geographicdimension', 'timedimension', 'enodebField', 'cgiField',
+                    'timeField', 'cellField', 'cityField', 'result', 'where', 'indexcount']
+        data_payload = {key: value for key, value in data_payload.items() if key in key_list}
+
+        data_list = self._fetch_by_loop(data_payload, total_count, progress_callback)
 
         report_logger.info("[结果] 实际获取数据: %d 条", len(data_list))
 

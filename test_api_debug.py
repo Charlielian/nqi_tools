@@ -557,8 +557,8 @@ def build_payload():
             'columnname': ''
         },
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': '2026-05-07 00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': '2026-05-07 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': '2026-05-07+00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': '2026-05-07+23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': '阳江', 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0

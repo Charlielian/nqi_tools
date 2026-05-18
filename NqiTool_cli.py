@@ -26,10 +26,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from core.auth import LoginManager
 from core.query import JXCXQuery
 from core.export import export_with_format
-from core.license import (
-    get_hw_info, generate_machine_code,
-    verify_with_user_code, save_user_code, decrypt_user_code
-)
 from utils.logger import ensure_dirs, setup_report_logging
 from utils.config import (
     LOG_DIR, OUTPUT_DIR, EXPIRY_DATE,
@@ -265,7 +261,8 @@ class NqiCLI(cmd.Cmd):
             '2': ('EPSFB小区监控预警数据表-天', 'epsfb'),
             '3': ('4G小区监控预警日报', '4g'),
             '4': ('5G小区监控日报', '5g'),
-            '5': ('自定义查询', 'custom')
+            '5': ('5G_干扰报表_自忙时', '5g_interference'),
+            '6': ('自定义查询', 'custom')
         }
 
         print(colored("\n【步骤 1/3】选择报表模板", Colors.YELLOW))
@@ -274,9 +271,9 @@ class NqiCLI(cmd.Cmd):
             print(colored(f"  {k}. {name}", Colors.CYAN))
 
         print(colored("\n请输入报表编号: ", Colors.YELLOW), end='')
-        report_choice = input().strip() or '5'
+        report_choice = input().strip() or '6'
 
-        if report_choice == '5':
+        if report_choice == '6':
             print(colored("\n请输入报表名称（从 JXCX 系统获取）: ", Colors.YELLOW), end='')
             report_name = input().strip()
             if not report_name:
@@ -364,13 +361,41 @@ class NqiCLI(cmd.Cmd):
 
         print(colored("[成功] 即席查询模块已就绪", Colors.GREEN))
 
-        # 构建 payload
-        payload = self.jxcx.build_payload_from_config(
-            report_name,
-            report_name,
-            where_conditions,
-            api_type='table'
-        )
+        # 检查是否是5G干扰报表，使用预定义字段配置
+        report_code = None
+        for k, v in reports.items():
+            if v[0] == report_name:
+                report_code = v[1]
+                break
+
+        if report_code == '5g_interference':
+            # 5G干扰报表使用预定义字段配置
+            from gui.field_configs import INTERFERENCE_5G_ZIMANG_FIELDS
+            dimension_override = {
+                'geographicdimension': '小区',
+                'timedimension': '天、周',
+                'enodebField': 'gnodeb_id',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'nrcell',
+                'cityField': 'city'
+            }
+            payload = self.jxcx.build_payload_from_config(
+                report_name,
+                report_name,
+                where_conditions,
+                api_type='table',
+                dimension_override=dimension_override,
+                fields_override=INTERFERENCE_5G_ZIMANG_FIELDS
+            )
+        else:
+            # 其他报表使用默认方式构建payload
+            payload = self.jxcx.build_payload_from_config(
+                report_name,
+                report_name,
+                where_conditions,
+                api_type='table'
+            )
 
         if not payload:
             print(colored("[错误] 无法构建查询参数", Colors.RED))
@@ -569,11 +594,15 @@ class NqiCLI(cmd.Cmd):
 
 
 def check_license_cli():
-    """CLI 模式授权检查"""
-    hw_info = get_hw_info()
-    machine_code = generate_machine_code(hw_info)
-    valid, result = verify_with_user_code(machine_code)
-    return valid, result, machine_code
+    """CLI 模式授权检查 - 仅检查程序过期时间"""
+    from datetime import datetime
+    try:
+        expiry = datetime.strptime(EXPIRY_DATE, "%Y-%m-%d")
+        if datetime.now() > expiry:
+            return False, f"程序已过期（{EXPIRY_DATE}）", None
+        return True, None, None
+    except Exception as e:
+        return False, f"日期解析错误: {e}", None
 
 
 def main():
@@ -581,35 +610,15 @@ def main():
     # 打印横幅
     print_banner()
 
-    # 检查授权
-    valid, result, machine_code = check_license_cli()
+    # 检查程序过期时间
+    valid, result, _ = check_license_cli()
     if not valid:
-        print(colored("[错误] 授权验证失败！", Colors.RED))
-        print(colored(f"\n机器码: {machine_code}", Colors.YELLOW))
-        print(colored("\n请联系管理员获取授权。\n", Colors.YELLOW))
-
-        # 尝试激活
-        print(colored("是否尝试激活？ (y/n): ", Colors.YELLOW), end='')
-        if input().strip().lower() == 'y':
-            print(colored("\n请输入用户码: ", Colors.YELLOW), end='')
-            user_code = input().strip()
-            if user_code:
-                success, expiry_ts, auth_machine = decrypt_user_code(user_code)
-                if success and auth_machine == machine_code:
-                    if save_user_code(user_code):
-                        print(colored("\n[成功] 激活成功！", Colors.GREEN))
-                        valid = True
-                    else:
-                        print(colored("\n[失败] 保存授权失败", Colors.RED))
-                else:
-                    print(colored("\n[失败] 用户码无效或与本机不匹配", Colors.RED))
-
-        if not valid:
-            print(colored("\n程序将退出。\n", Colors.RED))
-            sys.exit(1)
+        print(colored(f"[错误] {result}", Colors.RED))
+        print(colored("\n程序将退出。\n", Colors.RED))
+        sys.exit(1)
 
     # 启动 CLI
-    print(colored("[提示] 输入 help 查看可用命令\n", Colors.YELLOW))
+    print(colored(f"[提示] 程序有效期至 {EXPIRY_DATE}，输入 help 查看可用命令\n", Colors.GREEN))
 
     cli = NqiCLI()
     try:

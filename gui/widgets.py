@@ -10,7 +10,7 @@ import logging
 
 # 导入字段配置
 from gui.field_configs import (
-    INTERFERENCE_5G_FIELDS, INTERFERENCE_4G_FIELDS,
+    INTERFERENCE_5G_FIELDS, INTERFERENCE_4G_FIELDS, INTERFERENCE_5G_ZIMANG_FIELDS,
     VOLTE_4G_VOICE_FIELDS, EPSFB_4G_VOICE_FIELDS,
     VOLTE_4G_VOICE_WARNING_FIELDS, EPSFB_4G_VOICE_WARNING_FIELDS,
     CAPACITY_5G_FIELDS, IMPORTANT_SCENE_FIELDS,
@@ -24,7 +24,7 @@ from gui.field_configs import (
 
 # 导入硬编码Payload模板
 from gui.payload_templates import (
-    get_5g_interference_payload, get_4g_interference_payload,
+    get_5g_interference_payload, get_4g_interference_payload, get_5g_interference_zimang_payload,
     get_5g_capacity_payload, get_important_scene_payload,
     get_volte_warning_payload, get_epsfb_warning_payload, get_vonr_warning_payload,
     get_4g_wanchenglv_payload, get_5g_wanchenglv_payload,
@@ -496,6 +496,27 @@ class TableConfig:
                 'cityField': 'city',
             },
             'fields': INTERFERENCE_5G_FIELDS,
+        },
+        '5G_干扰报表_自忙时': {
+            'name': '5G_干扰报表_自忙时',
+            'table_key': '5G_干扰报表_自忙时',
+            'table_name': 'appdbv3.a_interfere_nrcell_zb4',
+            'fieldtype': '5G_干扰报表_自忙时',
+            'api_type': 'table',
+            'payload_func': get_5g_interference_zimang_payload,
+            'default_conditions': [
+                {'field': 'city', 'operator': 'like', 'value': '%%'},
+            ],
+            'dimension': {
+                'geographicdimension': '小区',
+                'timedimension': '天、周',
+                'enodebField': 'gnodeb_id',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'nrcell',
+                'cityField': 'city',
+            },
+            'fields': INTERFERENCE_5G_ZIMANG_FIELDS,
         },
         '4G干扰小区': {
             'name': '4G干扰小区',
