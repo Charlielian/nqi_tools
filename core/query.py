@@ -95,8 +95,9 @@ def convert_where_conditions(conditions):
             datatype = 'character'  # 默认
             if 'time' in field.lower() or 'date' in field.lower():
                 datatype = 'timestamp'
-                # 时间格式处理 - 根据HAR抓包，浏览器实际使用的是空格分隔符
-                # 例如: "2026-04-26 00:00:00" 而非 "2026-04-26+00:00:00"
+                # 时间格式处理 - API要求使用空格分隔符
+                # 例如: "2026-04-26 00:00:00"（空格格式为标准）
+                # 如果传入加号格式 "2026-04-26+00:00:00"，会自动转换为空格格式
                 if ' ' not in value and '+' not in value:
                     # 纯日期格式，需要添加时间部分
                     if operator in ('>=', '>'):
@@ -104,7 +105,7 @@ def convert_where_conditions(conditions):
                     elif operator in ('<=', '<', '='):
                         value = value + ' 23:59:59'
                 elif '+' in value:
-                    # 将加号替换为空格（兼容某些情况下传入的加号格式）
+                    # 将加号替换为空格（兼容旧格式）
                     value = value.replace('+', ' ')
                 # 结束时间使用 < 而非 <=（与浏览器保持一致）
                 if operator == '<=':

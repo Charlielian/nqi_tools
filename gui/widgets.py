@@ -33,6 +33,7 @@ from gui.payload_templates import (
     get_5g_kpi_payload, get_4g_kpi_payload,
     get_5g_mr_payload, get_4g_mr_payload,
     get_flow_hot_spot_station_payload,
+    get_common_pm_cell_day_v3_payload,
 )
 
 
@@ -538,6 +539,25 @@ class TableConfig:
                 'cityField': 'city',
             },
             'fields': INTERFERENCE_4G_FIELDS,
+        },
+        '通用性能报表-小区(天)v3': {
+            'name': '通用性能报表-小区(天)v3',
+            'table_key': '通用性能报表-小区(天)v3',
+            'table_name': 'appdbv3.a_common_pm_lte_cell_d',
+            'fieldtype': '通用性能统计-小区(天)',
+            'api_type': 'table',
+            'payload_func': get_common_pm_cell_day_v3_payload,
+            'fields': [],  # 使用payload中的result字段
+            'default_conditions': [],
+            'dimension': {
+                'geographicdimension': 'city',
+                'timedimension': '天粒度',
+                'enodebField': 'enodeb_id',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'cell',
+                'cityField': 'city',
+            }
         },
 
         # ========== 容量类 ==========

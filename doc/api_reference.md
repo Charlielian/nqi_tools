@@ -90,7 +90,7 @@ conditions = [
 **旧格式（兼容）**：
 ```python
 conditions = [
-    {'feild': 'starttime', 'symbol': '>=', 'val': '2026-04-01+00:00:00', 'datatype': 'timestamp'},
+    {'feild': 'starttime', 'symbol': '>=', 'val': '2026-04-01 00:00:00', 'datatype': 'timestamp'},
     {'feild': 'city', 'symbol': '=', 'val': '广州', 'datatype': 'character'}
 ]
 ```
@@ -98,9 +98,9 @@ conditions = [
 ### 4.2 时间字段处理
 
 - 时间字段建议使用 `timestamp` 类型
-- 开始时间：`operator: '>='`，格式：`2026-04-01+00:00:00`（使用加号分隔日期和时间）
-- 结束时间：`operator: '<'`，格式：`2026-04-30+23:59:59`（使用 `<` 而非 `<=`）
-- 也可使用 `operator: '<='`，值格式：`2026-04-30+23:59:59`
+- 开始时间：`operator: '>='`，格式：`2026-04-01 00:00:00`（使用空格分隔日期和时间）
+- 结束时间：`operator: '<'`，格式：`2026-04-30 23:59:59`（使用 `<` 而非 `<=`）
+- 也可使用 `operator: '<='`，值格式：`2026-04-30 23:59:59`
 
 ### 4.3 条件转换函数
 
@@ -112,7 +112,7 @@ from core.query import convert_where_conditions
 # 新格式转旧格式
 converted = convert_where_conditions(conditions)
 # 返回: [{'datatype': 'timestamp', 'feild': 'starttime', 'symbol': '>=',
-#         'val': '2026-04-01+00:00:00', 'whereCon': 'and', 'query': True}, ...]
+#         'val': '2026-04-01 00:00:00', 'whereCon': 'and', 'query': True}, ...]
 ```
 
 ---

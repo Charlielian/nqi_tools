@@ -96,8 +96,8 @@ def get_5g_interference_payload(start_date=None, end_date=None, city=None):
         'cellField': 'cell', 'cityField': 'city',
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -136,8 +136,65 @@ def get_4g_interference_payload(start_date=None, end_date=None, city=None):
         'cellField': 'cell', 'cityField': 'city',
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 0
+    }
+
+
+# ==================== 通用性能报表-小区(天)v3 ====================
+def get_common_pm_cell_day_v3_payload(start_date=None, end_date=None, city=None):
+    """通用性能报表-小区(天)v3 payload (基于HAR抓包)
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+        city: 地市名称
+    """
+    # 基础字段 (feildtype: 通用性能统计-小区(天))
+    base_fields = [
+        ('starttime', '记录开始时间'),
+        ('endtime', '记录结束时间'),
+        ('city', '所属地市'),
+        ('area', '所属区县'),
+        ('grid', '责任网格'),
+        ('branch', '人力区县分公司'),
+        ('cgi', 'CGI'),
+        ('cell_name', '小区名称'),
+    ]
+    base_feildtype = '通用性能统计-小区(天)'
+    result_list = _build_result_fields(base_fields, base_feildtype, 'appdbv3.a_common_pm_lte_cell_d', set(f[0] for f in base_fields))
+
+    # 干扰指标字段 (feildtype: 干扰指标) - PRB0-99
+    interference_fields = [
+        ('ulmeannl_prb_avg', '小区RB上行平均干扰电平平均值'),
+    ]
+    # 添加PRB0-PRB99字段
+    for i in range(100):
+        interference_fields.append((f'ulmeannl_prb{i}', f'小区RB上行平均干扰电平PRB{i}'))
+    interference_result = _build_result_fields(interference_fields, '干扰指标', 'appdbv3.a_common_pm_lte_cell_d', set())
+    result_list.extend(interference_result)
+
+    # 默认日期
+    if start_date is None:
+        start_date = '2026-05-16'
+    if end_date is None:
+        end_date = '2026-05-17'
+    if city is None:
+        city = '阳江'
+
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': 'city',
+        'timedimension': '天粒度',
+        'enodebField': 'enodeb_id', 'cgiField': 'cgi', 'timeField': 'starttime',
+        'cellField': 'cell', 'cityField': 'city',
+        'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -295,8 +352,8 @@ def get_5g_capacity_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 1
@@ -406,8 +463,8 @@ def get_important_scene_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -525,8 +582,8 @@ def get_volte_warning_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -595,8 +652,8 @@ def get_epsfb_warning_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -648,8 +705,8 @@ def get_vonr_warning_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -699,8 +756,8 @@ def get_4g_wanchenglv_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': '0', 'supportedtimedimension': '1'}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -762,8 +819,8 @@ def get_5g_wanchenglv_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': '0', 'supportedtimedimension': '1'}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -813,8 +870,8 @@ def get_volte_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -864,8 +921,8 @@ def get_epsfb_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -911,8 +968,8 @@ def get_5g_voice_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -1129,8 +1186,8 @@ def get_5g_kpi_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -1264,8 +1321,8 @@ def get_4g_kpi_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -1327,8 +1384,8 @@ def get_5g_mr_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': '1'}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -1389,8 +1446,8 @@ def get_flow_hot_spot_station_payload(start_date=None, end_date=None, city=None)
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': '1'}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
@@ -1443,8 +1500,8 @@ def get_4g_mr_payload(start_date=None, end_date=None, city=None):
         'search': {'value': '', 'regex': False},
         'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': '1'}, 'columnname': ''},
         'where': [
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date}+00:00:00', 'whereCon': 'and', 'query': True},
-            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date}+23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0
