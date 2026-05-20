@@ -1492,9 +1492,9 @@ F1        - 显示此帮助
             with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
                 for sheet_name, df in sheets_data:
                     df.to_excel(writer, sheet_name=str(sheet_name)[:31], index=False)
-            logger.info("多Sheet导出完成: %s (%d个Sheet)", filepath, len(sheets_data))
+            self.logger.info("多Sheet导出完成: %s (%d个Sheet)", filepath, len(sheets_data))
         except Exception as e:
-            logger.error("多Sheet导出失败: %s", e)
+            self.logger.error("多Sheet导出失败: %s", e)
 
     def _query_4g_voice_table(self, table_config, start_date, end_date, city,
                                multi_day, multi_day_per_sheet):
