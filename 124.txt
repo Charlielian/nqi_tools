@@ -1,0 +1,65 @@
+2026-05-09 17:01:07,856 [INFO] ============================================================
+2026-05-09 17:01:07,858 [INFO] 开始测试聚类工单API (用户: default)
+2026-05-09 17:01:07,860 [INFO] ============================================================
+2026-05-09 17:01:07,861 [INFO] [OK] Cookie已加载
+2026-05-09 17:01:07,861 [DEBUG]   - CASTGC: TGT-1659077-s1SCEhkX...
+2026-05-09 17:01:07,862 [DEBUG]   - JSESSIONID: 760BD68E8B4915965D83...
+2026-05-09 17:01:07,862 [DEBUG]   - gmcc.session.id: e03d90c9-3363-4249-b...
+2026-05-09 17:01:07,863 [DEBUG]   - metabase.DEVICE: 5fc513b6-b0b5-4399-a...
+2026-05-09 17:01:07,863 [DEBUG]   - rememberMe: QJGHaDUEUGgxnBKZGyFQ...
+2026-05-09 17:01:07,864 [INFO] [OK] Cookie 'CASTGC' 存在
+2026-05-09 17:01:07,865 [INFO] [OK] Cookie 'JSESSIONID' 存在
+2026-05-09 17:01:07,865 [INFO] [OK] Cookie 'rememberMe' 存在
+2026-05-09 17:01:07,865 [INFO]
+--- 测试 getgrid ---
+2026-05-09 17:01:07,866 [DEBUG] 请求URL: https://nqi.gmcc.net:20443/pro-ltemr-cicd/modules/disquery/getgrid
+2026-05-09 17:01:07,866 [DEBUG] 请求数据: {'city': '860662'}
+2026-05-09 17:01:07,873 [DEBUG] Starting new HTTPS connection (1): nqi.gmcc.net:20443
+2026-05-09 17:01:07,988 [DEBUG] https://nqi.gmcc.net:20443 "POST /pro-ltemr-cicd/modules/disquery/getgrid HTTP/1.1" 302 0
+2026-05-09 17:01:08,009 [DEBUG] https://nqi.gmcc.net:20443 "GET /pro-portal HTTP/1.1" 301 162
+2026-05-09 17:01:08,066 [DEBUG] https://nqi.gmcc.net:20443 "GET /pro-portal/ HTTP/1.1" 302 0
+2026-05-09 17:01:08,142 [DEBUG] https://nqi.gmcc.net:20443 "GET /cas/login?service=https%3A%2F%2Fnqi.gmcc.net%3A20443%2Fpro-portal%2F HTTP/1.1" 200 None
+2026-05-09 17:01:08,144 [INFO] 响应状态码: 200
+2026-05-09 17:01:08,144 [WARNING] [WARN] 响应不是JSON或状态码异常
+2026-05-09 17:01:08,145 [DEBUG] 响应内容: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml">
+
+        <head>
+                <meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><title>广东无线网络集中优化平台</title>
+                <!-- <link rel="stylesheet" th:href="@{${#themes.code('cas.myself.css')}}"/>
+        --><link rel="stylesheet" href="/cas/themes/portal/css/bootstrap.min.css"
+                /><link rel="stylesheet" href="/cas/themes/portal/css/swiper-4.5
+2026-05-09 17:01:08,146 [INFO]
+--- 测试 getproblemlabelByData ---
+2026-05-09 17:01:08,147 [DEBUG] 请求URL: https://nqi.gmcc.net:20443/pro-ltemr-cicd/modules/disquery/getproblemlabelByData
+2026-05-09 17:01:08,147 [DEBUG] 请求数据: {'typeid': '1', 'starttime': '2026-05-01', 'endtime': '2026-05-09'}
+2026-05-09 17:01:08,177 [DEBUG] https://nqi.gmcc.net:20443 "POST /pro-ltemr-cicd/modules/disquery/getproblemlabelByData HTTP/1.1" 302 0
+2026-05-09 17:01:08,197 [DEBUG] https://nqi.gmcc.net:20443 "GET /pro-portal HTTP/1.1" 301 162
+2026-05-09 17:01:08,253 [DEBUG] https://nqi.gmcc.net:20443 "GET /pro-portal/ HTTP/1.1" 302 0
+2026-05-09 17:01:08,329 [DEBUG] https://nqi.gmcc.net:20443 "GET /cas/login?service=https%3A%2F%2Fnqi.gmcc.net%3A20443%2Fpro-portal%2F HTTP/1.1" 200 None
+2026-05-09 17:01:08,331 [INFO] 响应状态码: 200
+2026-05-09 17:01:08,331 [WARNING] [WARN] 响应不是JSON
+2026-05-09 17:01:08,332 [DEBUG] 响应内容: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml">
+
+        <head>
+                <meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><title>广东无线网络集中优化平台</title>
+                <!-- <link rel="stylesheet" th:href="@{${#themes.code('cas.myself.css')}}"/>
+        --><link rel="stylesheet" href="/cas/themes/portal/css/bootstrap.min.css"
+                /><link rel="stylesheet" href="/cas/themes/portal/css/swiper-4.5
+2026-05-09 17:01:08,333 [INFO]
+--- 测试 queryProposal ---
+2026-05-09 17:01:08,333 [DEBUG] 请求URL: https://nqi.gmcc.net:20443/pro-ltemr-cicd/modules/disquery/queryProposal
+2026-05-09 17:01:08,362 [DEBUG] https://nqi.gmcc.net:20443 "POST /pro-ltemr-cicd/modules/disquery/queryProposal HTTP/1.1" 302 0
+2026-05-09 17:01:08,381 [DEBUG] https://nqi.gmcc.net:20443 "GET /pro-portal HTTP/1.1" 301 162
+2026-05-09 17:01:08,440 [DEBUG] https://nqi.gmcc.net:20443 "GET /pro-portal/ HTTP/1.1" 302 0
+2026-05-09 17:01:08,517 [DEBUG] https://nqi.gmcc.net:20443 "GET /cas/login?service=https%3A%2F%2Fnqi.gmcc.net%3A20443%2Fpro-portal%2F HTTP/1.1" 200 None
+2026-05-09 17:01:08,518 [INFO] 响应状态码: 200
+2026-05-09 17:01:08,519 [WARNING] [WARN] 响应不是JSON
+2026-05-09 17:01:08,519 [DEBUG] 响应内容: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml">
+
+        <head>
+                <meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><title>广东无线网络集中优化平台</title>
+                <!-- <link rel="stylesheet" th:href="@{${#themes.code('cas.myself.css')}}"/>
+        --><link rel="stylesheet" href="/cas/themes/portal/css/bootstrap.min.css"
+                /><link rel="stylesheet" href="/cas/themes/portal/css/swiper-4.5
+2026-05-09 17:01:08,520 [INFO]
+测试完成!

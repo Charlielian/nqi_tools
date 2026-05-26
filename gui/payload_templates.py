@@ -360,6 +360,94 @@ def get_5g_capacity_payload(start_date=None, end_date=None, city=None):
     }
 
 
+# ==================== 5G小区容量-周 ====================
+def get_5g_capacity_week_payload(start_date=None, end_date=None, city=None):
+    """5G小区容量-周报表payload (基于HAR抓包)
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+        city: 地市名称
+    """
+    # 字段列表 (基于5G小区容量-天报表，添加周粒度特有字段)
+    fields = [
+        ('starttime', '记录开始时间'), ('endtime', '记录结束时间'), ('city', '地市'),
+        ('ncgi', 'NCGI'), ('nrcell_name', '小区名称'), ('station_name', '站点名称'),
+        ('gnodeb_id', '基站标识'), ('busy_hour', '自忙时'), ('state', '网元状态'),
+        ('vendor', '设备厂家'), ('freq', '使用频段'),
+        ('frequency_band_detail', '详细使用频段'),
+        ('cover_type', '覆盖类型'), ('cover_scene', '一级场景'),
+        ('cover_scene1', '场景1'), ('cover_scene2', '场景2'),
+        ('cover_scene3', '场景3'), ('cover_scene4', '场景4'),
+        ('second_scene_detail', '二级场景细化'),
+        ('txrxmode', '收发模式'), ('ssbfrequenc', '中心载频信道号'),
+        ('band_width', '带宽'),
+        ('is_remote', '是否拉远'), ('is_highload', '是否高负荷'),
+        ('grid', '网格'), ('micro_grid', '微网格'),
+        ('grid_road', '网格道路'), ('sectors_name', '共站同覆盖小区名称'),
+        ('bh_rru_pdcchcceutil', '忙时PDCCH信道CCE占用个数'),
+        ('bh_pdcchcceoccupancyrate', 'PDCCH信道CCE占用率(%)'),
+        ('bh_pdschprbtot', '忙时下行PDSCH PRB总可用数'),
+        ('bh_puschprbtot', '忙时上行PUSCH PRB总可用数'),
+        ('bh_pdschprbassn', '忙时下行PDSCH PRB占用数'),
+        ('bh_puschprbassn', '忙时上行PUSCH PRB占用数'),
+        ('bh_prbassnratedl', '忙时下行PRB平均利用率(%)'),
+        ('bh_prbassnrateul', '忙时上行PRB平均利用率(%)'),
+        ('bh_rrc_connmax', '忙时RRC连接最大数'),
+        ('bh_rrc_connmean', '忙时RRC连接平均数'),
+        ('bh_cellprbrate', '忙时小区PRB利用率(%)'),
+        ('bh_dtchmimoprbassnratedl', '忙时下行空分复用因子'),
+        ('bh_dtchmimoprbassnrateul', '忙时上行空分复用因子'),
+        ('bh_avgdtchmimolayerdl', '忙时下行空分复用层数'),
+        ('bh_avgdtchmimolayerul', '忙时上行空分复用层数'),
+        ('maxdtchmimolayerdl', '最大下行MIMO层数'),
+        ('maxdtchmimolayerul', '最大上行MIMO层数'),
+        ('bh_kpi_flowsuccconnrate', '忙时流量建立成功率'),
+        ('bh_flow_nbrsuccestab', '忙时Flow建立成功次数'),
+        ('bh_flow_nbrattestab', '忙时Flow建立请求次数'),
+        ('bh_flow_nbrhoinc', '忙时切换入成功次数'),
+        ('bh_pdcp_upoctdl', '忙时PDCP层下行字节数(G)'),
+        ('bh_pdcp_upoctul', '忙时PDCP层上行字节数(G)'),
+        ('rlc_upoctdl', 'RLC层下行字节数(G)'),
+        ('rlc_upoctul', 'RLC层上行字节数(G)'),
+        ('rlc_upoctudl', 'RLC层上下行字节数(G)'),
+        ('bh_mac_cpoctdl', '忙时MAC层下行字节数(G)'),
+        ('bh_mac_cpoctul', '忙时MAC层上行字节数(G)'),
+        ('mac_cpoctudl', 'MAC层上下行字节数(G)'),
+        ('bh_upoctudl_perflow', '忙时每Flow上下行流量'),
+        ('longitude', '经度'), ('latitude', '纬度'),
+    ]
+
+    # 固定datatype='1'的字段
+    fixed_fields = {'starttime', 'endtime', 'city', 'ncgi', 'nrcell_name'}
+    result_list = _build_result_fields(fields, '5G小区容量报表 - 周粒度', 'appdbv3.a_adhoc_capacity_nr_nrcell_w', fixed_fields)
+
+    # 默认日期
+    if start_date is None:
+        start_date = '2026-05-01'
+    if end_date is None:
+        end_date = '2026-05-25'
+    if city is None:
+        city = '阳江'
+
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': '小区', 'timedimension': '周',
+        'enodebField': 'gnodeb_id', 'cgiField': 'ncgi', 'timeField': 'starttime',
+        'cellField': 'nrcell', 'cityField': 'city',
+        'columns': _build_columns_param([f[0] for f in fields]),
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 1
+    }
+
+
 # ==================== 重要场景 ====================
 def get_important_scene_payload(start_date=None, end_date=None, city=None):
     """重要场景-天报表payload
@@ -456,6 +544,80 @@ def get_important_scene_payload(start_date=None, end_date=None, city=None):
     return {
         'draw': 1, 'start': 0, 'length': 200, 'total': 0,
         'geographicdimension': '小区', 'timedimension': '天',
+        'enodebField': 'enodeb_id', 'cgiField': 'cgi', 'timeField': 'starttime',
+        'cellField': 'cell', 'cityField': 'city',
+        'columns': _build_columns_param([f[0] for f in fields]),
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 0
+    }
+
+
+# ==================== 重要场景-周 ====================
+def get_important_scene_week_payload(start_date=None, end_date=None, city=None):
+    """重要场景-周报表payload (基于HAR抓包)
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+        city: 地市名称
+    """
+    # 字段列表 (从HAR日志中提取)
+    fields = [
+        ('starttime', '记录开始时间'), ('endtime', '记录结束时间'), ('city', '所属地市'),
+        ('cgi', 'CGI'), ('freq_name', '频点'),
+        ('cell_name', '小区名称'), ('state', '网元状态'),
+        ('scene', '场景'), ('scene_name', '场景具体名称'),
+        ('upoctudl_avg', '日平均4G流量（GB）'),
+        ('ul_prbuse_rate_max', '日峰值上行PRB平均利用率'),
+        ('dl_prbuse_rate_max', '日峰值下行PRB平均利用率'),
+        ('pdcchcceutilratio_max', '日峰值PDCCH信道CCE占用率'),
+        ('bh_effectiveconnmax', '自忙时有效RRC连接最大数'),
+        ('bh_connmax', '自忙时RRC连接最大数'),
+        ('bh_ul_prbuse_rate', '自忙时上行PRB平均利用率'),
+        ('bh_dl_prbuse_rate', '自忙时下行PRB平均利用率'),
+        ('bh_pdcchcceutilratio', '自忙时PDCCH信道CCE占用率'),
+        ('radio_succ_rate', '无线接通率'),
+        ('radio_drop_rate_cell', '无线掉线率(小区级)'),
+        ('call_connect_rate', '呼叫接通率(MTC+MOC)'),
+        ('volte_drop_rate', 'VOLTE掉话率'),
+        ('esrvcc_ho_succ_rate', 'ESRVCC切换成功率'),
+        ('volte_voice_traffic', 'VOLTE语音话务量'),
+        ('is_highflow', '是否高流量预警小区'),
+        ('is_highload', '是否高负荷待扩容小区'),
+        ('is_dilatation', '是否扩容小区'),
+        ('is_carry', '是否纳入载波调度'),
+        ('is_city_tail', '是否本地市尾部小区'),
+        ('is_province_tail', '是否全省尾部小区'),
+        ('longitude', '经度'), ('latitude', '维度'),
+        ('cover', '覆盖类型'), ('coverlayer', '覆盖层标识'),
+        ('capacitylayer', '容量层标识'), ('cell_scene_name', '小区所属区域'),
+        ('vendor', '设备厂家'), ('freq', '使用频段'),
+        ('flow_coefficient', '流量系数'), ('bandwidth', '小区带宽'),
+        ('is_remote', '是否拉远'), ('station_name', '所属站点名称'),
+    ]
+
+    # 固定datatype='1'的字段（时间维度相关）
+    fixed_fields = {'starttime', 'endtime', 'cgi', 'cell_name', 'city'}
+    result_list = _build_result_fields(fields, '[管理视图]重要场景-小区周粒度', 'appdbv3.a_overview_ispm_lte_cell_w', fixed_fields)
+
+    # 默认日期
+    if start_date is None:
+        start_date = '2026-05-01'
+    if end_date is None:
+        end_date = '2026-05-25'
+    if city is None:
+        city = '阳江'
+
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': '小区', 'timedimension': '周',
         'enodebField': 'enodeb_id', 'cgiField': 'cgi', 'timeField': 'starttime',
         'cellField': 'cell', 'cityField': 'city',
         'columns': _build_columns_param([f[0] for f in fields]),

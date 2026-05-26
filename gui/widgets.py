@@ -13,7 +13,8 @@ from gui.field_configs import (
     INTERFERENCE_5G_FIELDS, INTERFERENCE_4G_FIELDS, INTERFERENCE_5G_ZIMANG_FIELDS,
     VOLTE_4G_VOICE_FIELDS, EPSFB_4G_VOICE_FIELDS,
     VOLTE_4G_VOICE_WARNING_FIELDS, EPSFB_4G_VOICE_WARNING_FIELDS,
-    CAPACITY_5G_FIELDS, IMPORTANT_SCENE_FIELDS,
+    CAPACITY_5G_FIELDS, CAPACITY_5G_WEEK_FIELDS,
+    IMPORTANT_SCENE_FIELDS, IMPORTANT_SCENE_WEEK_FIELDS,
     GONGCAN_5G_FIELDS, GONGCAN_4G_FIELDS,
     MR_5G_FIELDS, MR_4G_FIELDS,
     VOLTE_WARNING_FIELDS, VONR_WARNING_FIELDS, EPSFB_WARNING_FIELDS,
@@ -25,7 +26,8 @@ from gui.field_configs import (
 # 导入硬编码Payload模板
 from gui.payload_templates import (
     get_5g_interference_payload, get_4g_interference_payload, get_5g_interference_zimang_payload,
-    get_5g_capacity_payload, get_important_scene_payload,
+    get_5g_capacity_payload, get_5g_capacity_week_payload,
+    get_important_scene_payload, get_important_scene_week_payload,
     get_volte_warning_payload, get_epsfb_warning_payload, get_vonr_warning_payload,
     get_4g_wanchenglv_payload, get_5g_wanchenglv_payload,
     get_volte_payload, get_epsfb_payload, get_5g_voice_payload,
@@ -580,6 +582,27 @@ class TableConfig:
                 'cityField': 'city',
             }
         },
+
+        '5G小区容量-周': {
+            'name': '5G小区容量-周',
+            'table_key': '5G小区容量报表 - 周粒度',
+            'table_name': 'appdbv3.a_adhoc_capacity_nr_nrcell_w',
+            'fieldtype': '5G小区容量报表 - 周粒度',
+            'api_type': 'table',
+            'payload_func': get_5g_capacity_week_payload,
+            'fields': CAPACITY_5G_WEEK_FIELDS,
+            'default_conditions': [],
+            'dimension': {
+                'geographicdimension': '小区',
+                'timedimension': '周',
+                'enodebField': 'gnodeb_id',
+                'cgiField': 'ncgi',
+                'timeField': 'starttime',
+                'cellField': 'nrcell',
+                'cityField': 'city',
+            }
+        },
+
         '重要场景-天': {
             'name': '重要场景-天',
             'table_key': '重要场景-小区天',
@@ -592,6 +615,26 @@ class TableConfig:
             'dimension': {
                 'geographicdimension': '小区',
                 'timedimension': '天',
+                'enodebField': 'enodeb_id',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'cell',
+                'cityField': 'city',
+            }
+        },
+
+        '重要场景-周': {
+            'name': '重要场景-周',
+            'table_key': '重要场景-小区周',
+            'table_name': 'appdbv3.a_overview_ispm_lte_cell_w',
+            'fieldtype': '[管理视图]重要场景-小区周粒度',
+            'api_type': 'table',
+            'payload_func': get_important_scene_week_payload,
+            'fields': IMPORTANT_SCENE_WEEK_FIELDS,
+            'default_conditions': [],
+            'dimension': {
+                'geographicdimension': '小区',
+                'timedimension': '周',
                 'enodebField': 'enodeb_id',
                 'cgiField': 'cgi',
                 'timeField': 'starttime',
