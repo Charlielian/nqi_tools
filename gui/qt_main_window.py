@@ -32,7 +32,7 @@ import queue
 from core.auth import LoginManager
 from core.query import JXCXQuery
 from core.export import export_with_format
-from core.license import TimeMonitor, verify_serial_number, write_license_from_serial, generate_machine_code, get_hw_info
+from core.license import TimeMonitor
 from utils.logger import set_log_file, ensure_dirs
 from utils.config import LOG_DIR, EXPIRY_DATE, DEFAULT_USERNAME, DEFAULT_PASSWORD
 from gui.widgets import TableConfig
@@ -1735,9 +1735,8 @@ class NqiToolMainWindow(QMainWindow):
         self.end_date.setDate(end)
 
     def _show_activate_window(self):
-        """显示激活窗口"""
-        dialog = ActivateDialog(self)
-        dialog.exec()
+        """显示激活窗口（已停用）"""
+        QMessageBox.information(self, "提示", f"本软件使用内置授权，有效期至 {EXPIRY_DATE}。")
 
     def _on_time_rollback(self):
         """时间回拨检测"""
@@ -1861,121 +1860,7 @@ class LogHandler(logging.Handler):
         QTimer.singleShot(0, lambda: self.window.append_log(msg))
 
 
-class ActivateDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("授权激活")
-        self.setFixedSize(500, 380)
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-
-        from core.license import generate_machine_code, get_hw_info
-        hw_info = get_hw_info()
-        self.machine_code = generate_machine_code(hw_info)
-
-        info_label = QLabel("📋 本机信息 - 机器码")
-        info_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
-        layout.addWidget(info_label)
-
-        code_row = QHBoxLayout()
-        self.code_label = QLabel(self.machine_code[:40] + "...")
-        self.code_label.setStyleSheet("""
-            QLabel {
-                background-color: #f8f9fa; padding: 8px;
-                border-radius: 4px; font-family: Consolas; font-size: 9pt;
-            }
-        """)
-        code_row.addWidget(self.code_label, 1)
-        copy_btn = QPushButton("复制")
-        copy_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e9ecef; border: none;
-                border-radius: 4px; padding: 6px 16px;
-            }
-            QPushButton:hover { background-color: #dee2e6; }
-        """)
-        copy_btn.clicked.connect(self._copy_machine_code)
-        code_row.addWidget(copy_btn)
-        layout.addLayout(code_row)
-
-        serial_label = QLabel("🎫 输入验证序列号")
-        serial_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
-        layout.addWidget(serial_label)
-
-        self.serial_input = QLineEdit()
-        self.serial_input.setPlaceholderText("格式示例：NQI-xxxx-xxxx-xxxx")
-        self.serial_input.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #dee2e6; border-radius: 4px;
-                padding: 4px 8px; font-family: Consolas; font-size: 10pt;
-            }
-        """)
-        layout.addWidget(self.serial_input)
-
-        self.hint_label = QLabel("")
-        self.hint_label.setStyleSheet("color: #6c757d; font-size: 8pt;")
-        layout.addWidget(self.hint_label)
-
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        cancel_btn = QPushButton("取消")
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e9ecef; border: none;
-                border-radius: 4px; padding: 6px 16px;
-            }
-        """)
-        cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(cancel_btn)
-        self.activate_btn = QPushButton("✅ 激活授权")
-        self.activate_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #165DFF; color: white; font-weight: bold;
-                border: none; border-radius: 6px; padding: 6px 16px;
-            }
-            QPushButton:hover { background-color: #3a7afe; }
-        """)
-        self.activate_btn.clicked.connect(self._on_activate)
-        btn_layout.addWidget(self.activate_btn)
-        layout.addLayout(btn_layout)
-
-        self.serial_input.setFocus()
-        self.serial_input.returnPressed.connect(self.activate_btn.click)
-
-    def _copy_machine_code(self):
-        QApplication.clipboard().setText(self.machine_code)
-        self.hint_label.setText("机器码已复制到剪贴板")
-        self.hint_label.setStyleSheet("color: #22c55e; font-size: 8pt;")
-
-    def _on_activate(self):
-        serial = self.serial_input.text().strip()
-        if not serial:
-            self.hint_label.setText("请输入序列号")
-            self.hint_label.setStyleSheet("color: #dc3545; font-size: 8pt;")
-            return
-        self.hint_label.setText("正在验证...")
-        self.hint_label.setStyleSheet("color: #fd7e14; font-size: 8pt;")
-        self.activate_btn.setEnabled(False)
-        success, result = verify_serial_number(serial, self.machine_code)
-        if success:
-            write_success, msg = write_license_from_serial(result)
-            if write_success:
-                self.hint_label.setText("激活成功！")
-                self.hint_label.setStyleSheet("color: #22c55e; font-size: 8pt;")
-                QMessageBox.information(self, "成功", f"授权激活成功！\n\n过期时间：{result['expiry_time']}")
-                self.accept()
-            else:
-                self.hint_label.setText(f"写入授权失败：{msg}")
-                self.hint_label.setStyleSheet("color: #dc3545; font-size: 8pt;")
-                self.activate_btn.setEnabled(True)
-        else:
-            self.hint_label.setText(result)
-            self.hint_label.setStyleSheet("color: #dc3545; font-size: 8pt;")
-            self.activate_btn.setEnabled(True)
-
-
-class NqiToolApp:
+# ActivateDialog 已停用，授权验证完全基于 EXPIRY_DATE
     """应用程序入口"""
 
     def __init__(self):
