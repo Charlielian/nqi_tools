@@ -5,7 +5,30 @@
 """
 
 def _build_columns_param(field_list):
-    """构建DataTables格式的columns参数"""
+    """构建DataTables格式的columns参数（与浏览器HAR格式一致）"""
+    columns = []
+    for field in field_list:
+        columns.append({
+            'data': field,
+            'name': '',
+            'searchable': True,
+            'orderable': True,
+            'search': {'value': '', 'regex': False}
+        })
+    return columns
+
+
+def _build_columns_param_v2(field_list):
+    """构建DataTables格式的columns参数（包含更多字段，与浏览器HAR格式一致）
+    
+    浏览器HAR中的columns格式:
+    columns[0][data]: starttime
+    columns[0][name]: 
+    columns[0][searchable]: true
+    columns[0][orderable]: true
+    columns[0][search][value]: 
+    columns[0][search][regex]: false
+    """
     columns = []
     for field in field_list:
         columns.append({
@@ -25,7 +48,8 @@ def _build_result_fields(fields_config, fieldtype, table_name, fixed_datatype_fi
         fields_config: 字段配置列表，每个元素是(feild, feildName)元组或dict
         fieldtype: 字段类型
         table_name: 表名
-        fixed_datatype_fields: 使用固定datatype='1'的字段集合
+        fixed_datatype_fields: 使用固定datatype='1'的字段集合（字符类型）
+        time_datatype_fields: 使用固定datatype='2'的字段集合（时间/整数类型）
     """
     if fixed_datatype_fields is None:
         fixed_datatype_fields = set()
@@ -44,8 +68,17 @@ def _build_result_fields(fields_config, fieldtype, table_name, fixed_datatype_fi
             
         # 时间维度字段使用columntype=2
         columntype = 2 if feild == 'starttime' else 1
-        # 固定类型字段使用datatype='1'
-        datatype = '1' if feild in fixed_datatype_fields else 'character varying'
+
+        # ncgi 和 nrcell_name 在 HAR 中为 datatype='character varying', columntype=2
+        if feild in ('ncgi', 'nrcell_name'):
+            datatype = 'character varying'
+            columntype = 2
+        elif feild in fixed_datatype_fields:
+            datatype = '1'
+        elif feild in ('starttime', 'endtime', 'city'):
+            datatype = '2'  # 与浏览器HAR保持一致
+        else:
+            datatype = 'character varying'
         
         result_list.append({
             'feildtype': fieldtype,
@@ -356,7 +389,7 @@ def get_5g_capacity_payload(start_date=None, end_date=None, city=None):
             {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
-        'indexcount': 1
+        'indexcount': 0  # 与浏览器保持一致
     }
 
 
@@ -369,56 +402,79 @@ def get_5g_capacity_week_payload(start_date=None, end_date=None, city=None):
         end_date: 结束日期 (YYYY-MM-DD)
         city: 地市名称
     """
-    # 字段列表 (基于5G小区容量-天报表，添加周粒度特有字段)
+    # 字段列表 - 与 HAR getSelectTable 完全一致（共67个字段，按 sort 顺序排列）
+    # HAR 中 sort=15 有3个字段: sectors_name, bh_rru_pdcchcceutil, grid
     fields = [
-        ('starttime', '记录开始时间'), ('endtime', '记录结束时间'), ('city', '地市'),
-        ('ncgi', 'NCGI'), ('nrcell_name', '小区名称'), ('station_name', '站点名称'),
-        ('gnodeb_id', '基站标识'), ('busy_hour', '自忙时'), ('state', '网元状态'),
-        ('vendor', '设备厂家'), ('freq', '使用频段'),
+        ('starttime', '记录开始时间'),
+        ('endtime', '记录结束时间'),
+        ('city', '地市'),
+        ('nrcell_name', '小区名称'),
+        ('ncgi', 'NCGI'),
+        ('state', '网元状态'),
+        ('vendor', '设备厂家'),
+        ('freq', '使用频段'),
         ('frequency_band_detail', '详细使用频段'),
-        ('cover_type', '覆盖类型'), ('cover_scene', '一级场景'),
-        ('cover_scene1', '场景1'), ('cover_scene2', '场景2'),
-        ('cover_scene3', '场景3'), ('cover_scene4', '场景4'),
-        ('second_scene_detail', '二级场景细化'),
-        ('txrxmode', '收发模式'), ('ssbfrequenc', '中心载频信道号'),
-        ('band_width', '带宽'),
-        ('is_remote', '是否拉远'), ('is_highload', '是否高负荷'),
-        ('grid', '网格'), ('micro_grid', '微网格'),
-        ('grid_road', '网格道路'), ('sectors_name', '共站同覆盖小区名称'),
+        ('cover_type', '覆盖类型'),
+        ('cover_scene', '一级场景'),
+        ('is_remote', '是否拉远'),
+        ('station_name', '站点名称'),
+        ('longitude', '经度'),
+        ('latitude', '纬度'),
+        ('sectors_name', '共站同覆盖小区名称'),
         ('bh_rru_pdcchcceutil', '忙时PDCCH信道CCE占用个数'),
+        ('grid', '网格'),
+        ('grid_road', '网格道路'),
+        ('bh_rru_pdcchcceavail', '忙时PDCCH信道CCE可用个数'),
         ('bh_pdcchcceoccupancyrate', 'PDCCH信道CCE占用率(%)'),
-        ('bh_pdschprbtot', '忙时下行PDSCH PRB总可用数'),
-        ('bh_puschprbtot', '忙时上行PUSCH PRB总可用数'),
-        ('bh_pdschprbassn', '忙时下行PDSCH PRB占用数'),
-        ('bh_puschprbassn', '忙时上行PUSCH PRB占用数'),
-        ('bh_prbassnratedl', '忙时下行PRB平均利用率(%)'),
+        ('bh_rru_puschprbassn', '忙时上行PUSCH PRB占用数'),
+        ('bh_rru_puschprbtot', '忙时上行PUSCH PRB总可用数'),
         ('bh_prbassnrateul', '忙时上行PRB平均利用率(%)'),
-        ('bh_rrc_connmax', '忙时RRC连接最大数'),
-        ('bh_rrc_connmean', '忙时RRC连接平均数'),
-        ('bh_cellprbrate', '忙时小区PRB利用率(%)'),
-        ('bh_dtchmimoprbassnratedl', '忙时下行空分复用因子'),
-        ('bh_dtchmimoprbassnrateul', '忙时上行空分复用因子'),
-        ('bh_avgdtchmimolayerdl', '忙时下行空分复用层数'),
-        ('bh_avgdtchmimolayerul', '忙时上行空分复用层数'),
-        ('maxdtchmimolayerdl', '最大下行MIMO层数'),
-        ('maxdtchmimolayerul', '最大上行MIMO层数'),
-        ('bh_kpi_flowsuccconnrate', '忙时流量建立成功率'),
-        ('bh_flow_nbrsuccestab', '忙时Flow建立成功次数'),
-        ('bh_flow_nbrattestab', '忙时Flow建立请求次数'),
-        ('bh_flow_nbrhoinc', '忙时切换入成功次数'),
-        ('bh_pdcp_upoctdl', '忙时PDCP层下行字节数(G)'),
-        ('bh_pdcp_upoctul', '忙时PDCP层上行字节数(G)'),
-        ('rlc_upoctdl', 'RLC层下行字节数(G)'),
-        ('rlc_upoctul', 'RLC层上行字节数(G)'),
-        ('rlc_upoctudl', 'RLC层上下行字节数(G)'),
-        ('bh_mac_cpoctdl', '忙时MAC层下行字节数(G)'),
-        ('bh_mac_cpoctul', '忙时MAC层上行字节数(G)'),
+        ('bh_rru_pdschprbassn', '忙时下行PDSCH PRB占用数'),
+        ('bh_rru_pdschprbtot', '忙时下行PDSCH PRB总可用数'),
+        ('bh_prbassnratedl', '忙时下行PRB平均利用率(%)'),
+        ('bh_rlc_upoctul', 'RLC层上行字节数(G)'),
+        ('bh_rlc_upoctdl', 'RLC层下行字节数(G)'),
+        ('bh_mac_cpoctul', 'MAC层上行字节数(G)'),
+        ('bh_mac_cpoctdl', 'MAC层下行字节数(G)'),
+        ('bh_pdcp_upoctul', 'PDCP层上行字节数(G)'),
+        ('bh_pdcp_upoctdl', 'PDCP层下行字节数(G)'),
+        ('rlc_upoctul', '日RLC层上行字节数(G)'),
+        ('rlc_upoctdl', '日RLC层下行字节数(G)'),
+        ('rlc_upoctudl', '日RLC层上下行字节数(G)'),
         ('mac_cpoctudl', 'MAC层上下行字节数(G)'),
+        ('pdcp_upoctudl', 'PDCP层上下行字节数(G)'),
+        ('is_highload', '是否高负荷'),
+        ('bh_rrc_connmean', '忙时RRC连接平均数'),
+        ('bh_rrc_connmax', '忙时RRC连接最大数'),
+        ('bh_flow_nbrattestab', 'Flow建立请求次数'),
+        ('bh_flow_nbrsuccestab', 'Flow建立成功次数'),
+        ('bh_kpi_flowsuccconnrate', '忙时流量建立成功率'),
+        ('second_scene_detail', '二级场景细化'),
+        ('bh_puschprbtot_reuse', '忙时上行PRB可用空分层数'),
+        ('bh_puschprbassn_reuse', '忙时上行PRB占用空分层数'),
+        ('bh_avgdtchmimolayerul', '忙时上行空分复用层数'),
+        ('bh_pdschprbtot_reuse', '忙时下行PRB可用空分层数'),
+        ('bh_pdschprbassn_reuse', '忙时下行PRB占用空分层数'),
+        ('bh_avgdtchmimolayerdl', '忙时下行空分复用层数'),
+        ('maxdtchmimolayerul', '最大上行MIMO层数'),
+        ('maxdtchmimolayerdl', '最大下行MIMO层数'),
+        ('bh_dtchmimoprbassnrateul', '忙时上行空分PRB占用率'),
+        ('bh_dtchmimoprbassnratedl', '忙时下行空分PRB占用率'),
+        ('bh_cellprbrate', '忙时小区PRB利用率(%)'),
+        ('bh_flow_nbrhoinc', '忙时切换入成功次数'),
         ('bh_upoctudl_perflow', '忙时每Flow上下行流量'),
-        ('longitude', '经度'), ('latitude', '纬度'),
+        ('band_width', '带宽'),
+        ('ssbfrequenc', '中心载频信道号'),
+        ('txrxmode', '收发模式'),
+        ('area_type', '区域类型'),
+        ('micro_grid', '微网格'),
+        ('cover_scene1', '场景1'),
+        ('cover_scene2', '场景2'),
+        ('cover_scene3', '场景3'),
+        ('cover_scene4', '场景4'),
     ]
 
-    # 固定datatype='1'的字段
+    # 固定datatype='1'的字段 - 与 HAR 一致
     fixed_fields = {'starttime', 'endtime', 'city', 'ncgi', 'nrcell_name'}
     result_list = _build_result_fields(fields, '5G小区容量报表 - 周粒度', 'appdbv3.a_adhoc_capacity_nr_nrcell_w', fixed_fields)
 
@@ -433,8 +489,8 @@ def get_5g_capacity_week_payload(start_date=None, end_date=None, city=None):
     return {
         'draw': 1, 'start': 0, 'length': 200, 'total': 0,
         'geographicdimension': '小区', 'timedimension': '周',
-        'enodebField': 'gnodeb_id', 'cgiField': 'ncgi', 'timeField': 'starttime',
-        'cellField': 'nrcell', 'cityField': 'city',
+        'enodebField': 'station_name', 'cgiField': 'ncgi', 'timeField': 'starttime',
+        'cellField': 'nrcell_name', 'cityField': 'city',
         'columns': _build_columns_param([f[0] for f in fields]),
         'order': [{'column': 0, 'dir': 'desc'}],
         'search': {'value': '', 'regex': False},
@@ -444,7 +500,7 @@ def get_5g_capacity_week_payload(start_date=None, end_date=None, city=None):
             {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
-        'indexcount': 1
+        'indexcount': 0  # HAR使用0，与浏览器保持一致
     }
 
 

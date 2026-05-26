@@ -95,21 +95,24 @@ def convert_where_conditions(conditions):
             datatype = 'character'  # 默认
             if 'time' in field.lower() or 'date' in field.lower():
                 datatype = 'timestamp'
-                # 时间格式处理 - API要求使用空格分隔符
-                # 例如: "2026-04-26 00:00:00"（空格格式为标准）
+                # 时间格式使用空格分隔符（与浏览器保持一致）
+                # 例如: "2026-04-26 00:00:00"
                 # 如果传入加号格式 "2026-04-26+00:00:00"，会自动转换为空格格式
-                if ' ' not in value and '+' not in value:
+                if '+' in value:
+                    # 将加号替换为空格
+                    value = value.replace('+', ' ')
+                elif ' ' not in value and '+' not in value:
                     # 纯日期格式，需要添加时间部分
                     if operator in ('>=', '>'):
                         value = value + ' 00:00:00'
                     elif operator in ('<=', '<', '='):
                         value = value + ' 23:59:59'
-                elif '+' in value:
-                    # 将加号替换为空格（兼容旧格式）
-                    value = value.replace('+', ' ')
                 # 结束时间使用 < 而非 <=（与浏览器保持一致）
                 if operator == '<=':
                     operator = '<'
+            elif operator.lower() == 'in':
+                # 对于'in'操作符
+                datatype = 'character'
 
             # 推断symbol（保持原样）
             symbol = operator
@@ -405,16 +408,18 @@ class JXCXQuery:
 
         result_list = []
         for c in sorted_configs:
-            # columntype需要转换为字符串以与浏览器请求格式一致
-            columntype = c.get('columntype', 1)
-            if isinstance(columntype, int):
-                columntype = str(columntype)
+            # 转换datatype为浏览器使用的格式（数字代码）
+            datatype_str = c.get('datatype', 'character varying')
+            datatype_code = self._datatype_to_code(datatype_str)
+            
+            # columntype保持为数字类型（与浏览器请求格式一致）
+            # 浏览器发送的是数字类型的columntype，不是字符串
             result_list.append({
                 'feildtype': c.get('fieldtype', ''),
                 'table': c.get('tablename', ''),
                 'tableName': c.get('tablename_cn', ''),
-                'datatype': c.get('datatype', 'character varying'),
-                'columntype': columntype,
+                'datatype': datatype_code,
+                'columntype': c.get('columntype', 1),
                 'feildName': c.get('columnname_cn', ''),
                 'feild': c.get('columnname', ''),
                 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'
@@ -423,7 +428,7 @@ class JXCXQuery:
         result = {
             'result': result_list,
             'tableParams': {
-                'supporteddimension': supporteddimension if supporteddimension else '',
+                'supporteddimension': None if not supporteddimension else supporteddimension,
                 'supportedtimedimension': supportedtimedimension if supportedtimedimension else ''
             },
             'columnname': ''
@@ -481,11 +486,13 @@ class JXCXQuery:
         # 构建result
         result_list = []
         for field in fields_list:
+            # 转换datatype为浏览器使用的格式（数字代码）
+            datatype_code = self._datatype_to_code('character varying')
             result_list.append({
                 'feildtype': fieldtype,
                 'table': table_name,
                 'tableName': '',
-                'datatype': 'character varying',
+                'datatype': datatype_code,
                 'columntype': 1,
                 'feildName': field,
                 'feild': field,
@@ -559,11 +566,14 @@ class JXCXQuery:
             })
 
             table_name = config.get('table', table_name)
+            # 转换datatype为浏览器使用的格式（数字代码）
+            datatype_str = config.get('datatype', 'character varying')
+            datatype_code = self._datatype_to_code(datatype_str)
             result_list.append({
                 'feildtype': config.get('feildtype', fieldtype),
                 'table': config.get('table', table_name),
                 'tableName': config.get('tableName', ''),
-                'datatype': config.get('datatype', 'character varying'),
+                'datatype': datatype_code,
                 'columntype': config.get('columntype', 1),
                 'feildName': config.get('feildName', field),
                 'feild': field,
@@ -573,7 +583,7 @@ class JXCXQuery:
         result = {
             'result': result_list,
             'tableParams': {
-                'supporteddimension': supporteddimension if supporteddimension else '',
+                'supporteddimension': None if not supporteddimension else supporteddimension,
                 'supportedtimedimension': supportedtimedimension if supportedtimedimension else ''
             },
             'columnname': ''
@@ -776,10 +786,9 @@ class JXCXQuery:
         if not self.enabled:
             self.enter_jxcx()
 
-        # getTableCount请求需要这些参数（与旧版保持一致，包含columns/order/search）
+        # getTableCount请求只需要这些参数（与浏览器保持一致，不包含columns/order/search）
         key_list = ['geographicdimension', 'timedimension', 'enodebField', 'cgiField',
-                    'timeField', 'cellField', 'cityField', 'result', 'where', 'indexcount',
-                    'columns', 'order', 'search']
+                    'timeField', 'cellField', 'cityField', 'result', 'where', 'indexcount']
         payload_count = {key: value for key, value in payload.items() if key in key_list}
         payload_encoded = self._encode_payload(payload_count)
 
@@ -988,8 +997,48 @@ class JXCXQuery:
 
         return None
 
+    def _datatype_to_code(self, datatype_str):
+        """将数据类型字符串转换为浏览器使用的数字代码
+        
+        浏览器使用的格式:
+        - "2" = bigint/timestamp/integer
+        - "1" = character varying/varchar/character
+        - "decimal" = 小数类型
+        - "boolean" = 布尔类型（保持原样）
+        
+        Args:
+            datatype_str: 数据类型字符串
+            
+        Returns:
+            转换后的值（可能是数字代码或字符串）
+        """
+        if not datatype_str:
+            return datatype_str
+            
+        datatype_lower = datatype_str.lower()
+        
+        # bigint, timestamp, integer 类型使用 "2"
+        # 注意：有些表的city字段在API中返回的是integer类型，需要转为"2"
+        if datatype_lower in ('bigint', 'timestamp', 'integer', 'int', '2'):
+            return '2'
+        
+        # character varying, varchar, character 使用 "1"
+        if datatype_lower in ('character varying', 'character', 'varchar', 'text', '1'):
+            return '1'
+        
+        # boolean 类型使用 "1"（与浏览器一致）
+        if datatype_lower in ('boolean',):
+            return '1'
+        
+        # decimal 类型保持原样
+        if datatype_lower in ('decimal', 'numeric', 'double', 'float', 'real'):
+            return datatype_str
+            
+        # 其他类型保持原样
+        return datatype_str
+
     def _encode_payload(self, payload):
-        """URL编码payload - 使用DataTables标准格式"""
+        """URL编码payload - 使用DataTables标准格式，与浏览器完全一致"""
         from urllib.parse import quote
         out_list = []
         for key in payload:
@@ -1004,6 +1053,9 @@ class JXCXQuery:
                     continue
 
                 # DataTables标准格式: columns[0][data]=field&columns[0][name]=&...
+                # 关键：浏览器发送时 name 字段是空字符串但仍然发送！
+                # 例如: columns[0][name]=&columns[0][data]=starttime
+                # 不能跳过空字符串，否则服务器验证会失败
                 col_parts = []
                 for i, col in enumerate(payload[key]):
                     if isinstance(col, str):
@@ -1013,9 +1065,12 @@ class JXCXQuery:
                         for sub_key, sub_val in col.items():
                             if isinstance(sub_val, dict):
                                 for ss_key, ss_val in sub_val.items():
-                                    col_parts.append(f'columns[{i}][{sub_key}][{ss_key}]={quote(str(ss_val))}')
+                                    # columns[i][search][value]中的方括号不编码
+                                    # 关键：空字符串也要发送（与浏览器格式完全一致）
+                                    col_parts.append(f'columns[{i}][{sub_key}][{ss_key}]={quote(str(ss_val), safe="")}')
                             else:
-                                col_parts.append(f'columns[{i}][{sub_key}]={quote(str(sub_val))}')
+                                # 关键：空字符串也要发送（与浏览器格式完全一致）
+                                col_parts.append(f'columns[{i}][{sub_key}]={quote(str(sub_val), safe="")}')
                     except AttributeError:
                         continue
                 out_list.append('&'.join(col_parts))
@@ -1024,20 +1079,23 @@ class JXCXQuery:
                 order_parts = []
                 for i, ord_item in enumerate(payload[key]):
                     for sub_key, sub_val in ord_item.items():
-                        order_parts.append(f'order[{i}][{sub_key}]={quote(str(sub_val))}')
+                        # order参数中的方括号不编码
+                        order_parts.append(f'order[{i}][{sub_key}]={quote(str(sub_val), safe="")}')
                 out_list.append('&'.join(order_parts))
             elif key == 'search':
                 # DataTables标准格式: search[value]=&search[regex]=false
+                # search参数中的方括号不编码
                 search_parts = []
                 for sub_key, sub_val in payload[key].items():
-                    search_parts.append(f'search[{sub_key}]={quote(str(sub_val))}')
+                    search_parts.append(f'search[{sub_key}]={quote(str(sub_val), safe="")}')
                 out_list.append('&'.join(search_parts))
             elif key in ['result', 'where']:
                 # 使用与浏览器一致的JSON格式
                 # ensure_ascii=False: 保持中文原样
                 # separators=(',', ':'): 去除空格，与浏览器格式一致
                 json_str = json.dumps(payload[key], ensure_ascii=False, separators=(',', ':'))
-                out_list.append(quote(key) + '=' + quote(json_str))
+                # 空格不编码，保持原样；只保留必要的safe字符
+                out_list.append(quote(key) + '=' + quote(json_str, safe='/:= '))
             elif isinstance(payload[key], int):
                 out_list.append(quote(key) + '=' + str(payload[key]))
             else:
@@ -1245,9 +1303,10 @@ class JXCXQuery:
         p['start'] = 0
         p['length'] = total_count
 
-        # 根据数据量设置合理的超时时间
-        timeout = max(60, min(600, total_count // 1000 * 3))
-        logger.debug("设置超时时间: %d 秒", timeout)
+        # 根据数据量设置合理的超时时间（更保守的计算）
+        # 基础超时30秒，每1000条数据增加60秒
+        timeout = max(120, min(600, 30 + (total_count // 1000) * 60))
+        logger.info("[DEBUG] 设置超时时间: %d 秒 (数据量: %d)", timeout, total_count)
 
         if progress_callback:
             progress_callback(0, total_count, f"正在获取 {total_count} 条数据...")
@@ -1339,6 +1398,36 @@ class JXCXQuery:
         time_dim = payload.get('timedimension', 'N/A')
         report_logger.debug("地理维度: %s, 时间维度: %s", geo_dim, time_dim)
 
+        # ========== 周粒度报表日期范围校验 ==========
+        if '周' in time_dim and 'where' in payload and payload['where']:
+            try:
+                from datetime import datetime
+                date_conditions = []
+                for cond in payload['where']:
+                    if cond.get('feild', '') == 'starttime':
+                        val = cond.get('val', '')
+                        if ' ' in val:
+                            val = val.split(' ')[0]
+                        date_conditions.append(val)
+                
+                if len(date_conditions) >= 2:
+                    start = datetime.strptime(date_conditions[0], '%Y-%m-%d')
+                    end = datetime.strptime(date_conditions[1], '%Y-%m-%d')
+                    days_diff = (end - start).days
+                    
+                    if days_diff < 7:
+                        report_logger.warning("")
+                        report_logger.warning("╔══════════════════════════════════════════════════════════════════╗")
+                        report_logger.warning("║ [警告] 周粒度报表的日期范围不足一周!                              ║")
+                        report_logger.warning("║ 当前范围: %s ~ %s (共 %d 天)", 
+                            date_conditions[0], date_conditions[1], days_diff)
+                        report_logger.warning("║ 周粒度报表需要完整的周数据，单日查询可能返回0条                    ║")
+                        report_logger.warning("║ 建议: 将结束日期延长至开始日期后7天以上                          ║")
+                        report_logger.warning("╚══════════════════════════════════════════════════════════════════╝")
+                        report_logger.warning("")
+            except Exception as e:
+                report_logger.debug("日期范围校验异常: %s", e)
+
         # 查询条件（DEBUG）- 添加更详细的日志
         if 'where' in payload and payload['where']:
             report_logger.info("=" * 60)
@@ -1365,11 +1454,57 @@ class JXCXQuery:
             progress_callback(0, total_count, f"开始查询，共 {total_count} 行数据")
 
         if total_count == 0:
-            report_logger.warning("数据为空")
-            return pd.DataFrame() if to_df else {'data': []}
+            report_logger.warning("数据为空，尝试直接调用 getTable 获取数据...")
+            # 即使 count=0，也尝试调用 getTable，因为有些报表可能 count 接口有问题
+            report_logger.info("┌──────────────────────────────────────────────────────────────────┐")
+            report_logger.info("│ [调试模式] getTableCount 返回 0，尝试直接获取数据                │")
+            report_logger.info("└──────────────────────────────────────────────────────────────────┘")
+            
+            # 构造 getTable payload（使用与 count 相同的参数）
+            data_payload = payload.copy()
+            data_payload['draw'] = 1
+            data_payload['start'] = 0
+            data_payload['length'] = 200
+            data_payload['total'] = 0
+            if 'columns' not in data_payload:
+                data_payload['columns'] = []
+            if 'order' not in data_payload:
+                data_payload['order'] = [{'column': 0, 'dir': 'desc'}]
+            if 'search' not in data_payload:
+                data_payload['search'] = {'value': '', 'regex': False}
+            if 'indexcount' in data_payload:
+                data_payload['indexcount'] = 2
+            
+            # 直接调用 _fetch_data 尝试获取数据
+            try:
+                debug_data = self._fetch_data(data_payload, timeout=120, report_name=report_name)
+                if debug_data and len(debug_data) > 0:
+                    report_logger.info("✓ [调试模式] getTable 成功返回 %d 条数据!", len(debug_data))
+                    # 如果 getTable 返回数据，则使用这些数据
+                    if to_df:
+                        res_df = pd.DataFrame(debug_data)
+                        # 尝试应用字段映射
+                        en_zh_df = self._get_field_mapping(payload)
+                        if not en_zh_df.empty:
+                            res_df = pd.concat([en_zh_df, res_df], ignore_index=True)
+                            index_first = res_df.index.tolist()[0]
+                            to_colname = list(res_df.loc[index_first])
+                            res_df.columns = to_colname
+                            res_df.drop(index=index_first, inplace=True)
+                        report_logger.info("✓ 报表完成: %s, 数据: %d行 x %d列", report_name, len(res_df), len(res_df.columns))
+                        return res_df
+                    else:
+                        return {'data': debug_data}
+                else:
+                    report_logger.warning("getTable 也返回空数据，确认该日期范围内无数据")
+                    report_logger.warning("提示: 周粒度报表需要至少7天的日期范围")
+                    return pd.DataFrame() if to_df else {'data': []}
+            except Exception as e:
+                report_logger.error("调试模式 getTable 调用失败: %s", e)
+                return pd.DataFrame() if to_df else {'data': []}
 
         # ========== 第二步：获取数据 ==========
-        # 与HAR请求格式一致：只包含必要的参数，不包含columns/order/search/draw/start/length/total
+        # 与HAR请求格式一致：getTable需要完整的DataTables参数
         report_logger.info("")
         report_logger.info("┌──────────────────────────────────────────────────────────────────┐")
         report_logger.info("│ Step 2: 获取数据内容                                              │")
@@ -1378,11 +1513,35 @@ class JXCXQuery:
         report_logger.info("│ 预计超时时间: %ds", max(60, min(300, total_count // 1000 * 2)))
         report_logger.info("└──────────────────────────────────────────────────────────────────┘")
 
-        # 构建与HAR一致的payload（不包含columns/order/search/draw/start/length/total）
+        # 【关键修复】getTable需要完整参数，与浏览器成功请求一致：
+        # - draw=1: DataTables请求计数器
+        # - columns[...]: 完整的列配置（68个列，每个列有data/searchable/orderable/search等）
+        # - start=0, length=200: 分页参数（即使一次性获取也要传）
+        # - total=0: 总数标记
+        # - order[...]: 排序配置
+        # - search[...]: 搜索配置
+        # - indexcount: 索引计数（成功请求中为2）
         data_payload = payload.copy()
-        key_list = ['geographicdimension', 'timedimension', 'enodebField', 'cgiField',
-                    'timeField', 'cellField', 'cityField', 'result', 'where', 'indexcount']
-        data_payload = {key: value for key, value in data_payload.items() if key in key_list}
+        data_payload['draw'] = 1
+        data_payload['start'] = 0
+        data_payload['length'] = 200  # 浏览器使用200作为初始值
+        data_payload['total'] = 0
+        
+        # 确保columns存在且完整（从原始payload继承）
+        if 'columns' not in data_payload:
+            report_logger.warning("警告: payload中缺少columns参数")
+        
+        # 确保order存在
+        if 'order' not in data_payload:
+            data_payload['order'] = [{'column': 0, 'dir': 'desc'}]
+        
+        # 确保search存在
+        if 'search' not in data_payload:
+            data_payload['search'] = {'value': '', 'regex': False}
+        
+        # indexcount设为2（与浏览器成功请求一致）
+        if 'indexcount' in data_payload:
+            data_payload['indexcount'] = 2
 
         data_list = self._fetch_by_loop(data_payload, total_count, progress_callback)
 

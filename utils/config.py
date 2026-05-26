@@ -151,7 +151,7 @@ HEADERS_JSON = {
     'Content-Type': 'application/json'
 }
 
-EXPIRY_DATE = "2026-06-30"
+EXPIRY_DATE = "2026-09-30"
 LICENSE_FILE = "license.dat"
 
 # 配置目录（与app_path相同，用于存放secrets.yaml等配置文件）

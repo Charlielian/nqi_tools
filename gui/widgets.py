@@ -595,10 +595,10 @@ class TableConfig:
             'dimension': {
                 'geographicdimension': '小区',
                 'timedimension': '周',
-                'enodebField': 'gnodeb_id',
+                'enodebField': 'station_name',
                 'cgiField': 'ncgi',
                 'timeField': 'starttime',
-                'cellField': 'nrcell',
+                'cellField': 'nrcell_name',
                 'cityField': 'city',
             }
         },
