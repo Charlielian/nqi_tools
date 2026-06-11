@@ -7,6 +7,7 @@ GUI组件模块
 import tkinter as tk
 from tkinter import ttk
 import logging
+from datetime import datetime, timedelta
 
 # 导入字段配置
 from gui.field_configs import (
@@ -21,6 +22,8 @@ from gui.field_configs import (
     KPI_4G_FIELDS, KPI_5G_FIELDS,
     VOICE_5G_FIELDS,
     FLOW_HOT_SPOT_STATION_FIELDS,
+    SECTORS_4G_5G_FIELDS,
+    SYNTHESIZE_45G_CONFIG,
 )
 
 # 导入硬编码Payload模板
@@ -36,6 +39,7 @@ from gui.payload_templates import (
     get_5g_mr_payload, get_4g_mr_payload,
     get_flow_hot_spot_station_payload,
     get_common_pm_cell_day_v3_payload,
+    get_sectors_4g_5g_payload,
 )
 
 
@@ -284,13 +288,15 @@ class MultiSelectDropdown(ttk.Frame):
                  '惠州', '汕头', '潮州', '揭阳', '汕尾', '湛江', '茂名', '阳江',
                  '云浮', '韶关', '梅州', '河源', '清远']
 
-    def __init__(self, parent, values, width=18, select_all=False, max_dropdown_items=5):
+    def __init__(self, parent, values, width=18, select_all=False, max_dropdown_items=5,
+                 on_change_callback=None):
         super().__init__(parent)
         self.values = values
         self.var_dict = {}
         self.var = tk.StringVar(value="")
         self._selected_order = []
         self._max_dropdown_items = max_dropdown_items  # 下拉列表最大显示项数
+        self.on_change_callback = on_change_callback  # 选择变化回调
 
         # 输入框 + 下拉按钮
         self.entry = ttk.Entry(self, textvariable=self.var, width=width, state='readonly')
@@ -441,6 +447,10 @@ class MultiSelectDropdown(ttk.Frame):
         else:
             self.var.set("")
         self.dropdown.withdraw()
+        
+        # 触发选择变化回调
+        if self.on_change_callback:
+            self.on_change_callback(selected)
 
     def get_selected(self):
         """获取选中的值列表"""
@@ -475,8 +485,15 @@ class MultiSelectDropdown(ttk.Frame):
 
 
 class TableConfig:
-    """数据表配置类"""
+    """数据表配置类 - 支持YAML自动加载"""
 
+    # 强制使用的数据源（用于切换测试）
+    # None = 自动模式（优先YAML，回退到旧配置）
+    # 'yaml' = 强制使用YAML配置
+    # 'old' = 强制使用旧代码配置
+    force_source = None
+
+    # 旧配置（备用，用于向后兼容）
     TABLE_CONFIGS = {
         # ========== 干扰类 ==========
         '5G干扰小区': {
@@ -678,6 +695,30 @@ class TableConfig:
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区，网格，地市，分公司',
+                'timedimension': '天粒度',
+                'enodebField': 'enodeb_id',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'cell',
+                'cityField': 'city',
+            }
+        },
+
+        # ========== 共站同覆盖小区_4g_5g ==========
+        '共站同覆盖小区_4g_5g': {
+            'name': '共站同覆盖小区_4g_5g',
+            'table_key': 'appdbv3.a_struct_sectors_d',
+            'table_name': 'appdbv3.a_struct_sectors_d',
+            'fieldtype': '共站同覆盖小区_4g_5g',
+            'api_type': 'table',
+            'payload_func': get_sectors_4g_5g_payload,
+            'is_gongcan': True,
+            'fields': SECTORS_4G_5G_FIELDS,
+            'default_conditions': [
+                {'field': 'curr_flag', 'operator': '=', 'value': '1'},
+            ],
+            'dimension': {
+                'geographicdimension': '小区',
                 'timedimension': '天粒度',
                 'enodebField': 'enodeb_id',
                 'cgiField': 'cgi',
@@ -931,19 +972,262 @@ class TableConfig:
                 'cityField': 'city',
             }
         },
+
+        # ========== 专项功能：合成45G流量表 ==========
+        '合成45G流量表': {
+            'name': '合成45G流量表',
+            'is_synthesize': True,
+            'time_granularity': 'week',
+            'source_tables': SYNTHESIZE_45G_CONFIG['source_tables'],
+            'dimension': SYNTHESIZE_45G_CONFIG['dimension'],
+        },
     }
+
+    # YAML加载器单例
+    _yaml_loader = None
+
+    @classmethod
+    def set_config_source(cls, source):
+        """设置配置数据源
+
+        Args:
+            source: 数据源类型
+                - None: 自动模式（优先YAML，回退到旧配置）
+                - 'yaml': 强制使用YAML配置
+                - 'old': 强制使用旧代码配置
+        """
+        if source not in (None, 'yaml', 'old'):
+            raise ValueError(f"无效的配置源: {source}，有效值为 None, 'yaml', 'old'")
+        cls.force_source = source
+
+    @classmethod
+    def _get_yaml_loader(cls):
+        """获取YAML加载器"""
+        if cls._yaml_loader is None:
+            from gui.table_config_loader import TableConfigLoader
+            cls._yaml_loader = TableConfigLoader()
+            cls._yaml_loader.load_all()
+        return cls._yaml_loader
 
     @classmethod
     def get_table_names(cls):
-        """获取所有数据表名称"""
-        return list(cls.TABLE_CONFIGS.keys())
+        """获取所有数据表名称（YAML配置 + 旧配置）
+
+        Returns:
+            list: 所有表格名称，按字母排序
+        """
+        # 从YAML加载的表格
+        yaml_names = set(cls._get_yaml_loader().get_all_names())
+        # 从旧配置加载的表格
+        old_names = set(cls.TABLE_CONFIGS.keys())
+        # 合并并排序
+        return sorted(yaml_names | old_names)
 
     @classmethod
     def get_table_config(cls, table_name):
-        """获取指定数据表的配置"""
-        return cls.TABLE_CONFIGS.get(table_name)
+        """获取指定数据表的配置
+
+        根据 force_source 决定使用哪个数据源：
+        - 'yaml': 强制使用YAML配置
+        - 'old': 强制使用旧代码配置
+        - None: 自动模式（优先YAML，回退到旧配置）
+
+        Args:
+            table_name: 表格名称
+
+        Returns:
+            dict: 表格配置，如果不存在则返回None
+        """
+        # 根据 force_source 决定使用哪个数据源
+        if cls.force_source == 'yaml':
+            return cls._get_yaml_loader().get_config(table_name)
+        elif cls.force_source == 'old':
+            return cls.TABLE_CONFIGS.get(table_name)
+        else:
+            # 默认行为：优先从YAML获取，如果不存在则回退到旧配置
+            yaml_config = cls._get_yaml_loader().get_config(table_name)
+            if yaml_config:
+                return yaml_config
+            return cls.TABLE_CONFIGS.get(table_name)
 
     @classmethod
     def get_all_configs(cls):
-        """获取所有数据表配置"""
-        return cls.TABLE_CONFIGS
+        """获取所有数据表配置（合并YAML和旧配置）
+
+        Returns:
+            dict: 所有表格配置
+        """
+        all_configs = dict(cls.TABLE_CONFIGS)
+        all_configs.update(cls._get_yaml_loader()._configs)
+        return all_configs
+
+    @classmethod
+    def build_payload_from_yaml(cls, table_name, start_date, end_date, city):
+        """从YAML配置构建payload
+
+        Args:
+            table_name: 表格名称
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            city: 地市名称
+
+        Returns:
+            dict: 构建好的payload，如果配置不存在则返回None
+        """
+        config = cls.get_table_config(table_name)
+        if config:
+            return cls._get_yaml_loader().build_payload(config, start_date, end_date, city)
+        return None
+
+    @classmethod
+    def reload_yaml_configs(cls):
+        """重新加载YAML配置"""
+        if cls._yaml_loader:
+            cls._yaml_loader.reload()
+
+
+class WeekSelector(ttk.Frame):
+    """周选择器组件 - 用于选择周的起始日期（周一）
+    
+    提供两种模式：
+    1. 下拉选择：选择年内第几周
+    2. 直接输入：直接指定周一日期
+    """
+    
+    WEEKDAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+    
+    def __init__(self, parent, width=20, **kwargs):
+        super().__init__(parent, **kwargs)
+        
+        self.var = tk.StringVar(value="")
+        self._week_start_date = None
+        
+        # 创建组件
+        content = ttk.Frame(self)
+        content.pack(fill=tk.X, expand=True)
+        
+        # 周数下拉选择
+        top_row = ttk.Frame(content)
+        top_row.pack(fill=tk.X, pady=(0, 4))
+        
+        ttk.Label(top_row, text="选择周:", font=('Microsoft YaHei UI', 8)).pack(side=tk.LEFT, padx=(0, 4))
+        
+        # 生成周列表
+        self.weeks = self._generate_week_options()
+        self.week_var = tk.StringVar()
+        week_combo = ttk.Combobox(top_row, textvariable=self.week_var, 
+                                   values=[w[1] for w in self.weeks],
+                                   width=12, state='readonly')
+        week_combo.pack(side=tk.LEFT, padx=(0, 4))
+        week_combo.bind('<<ComboboxSelected>>', self._on_week_selected)
+        
+        # 当前选中的周信息显示
+        self.info_label = ttk.Label(top_row, text="", font=('Microsoft YaHei UI', 8))
+        self.info_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # 日期范围显示
+        bottom_row = ttk.Frame(content)
+        bottom_row.pack(fill=tk.X, pady=(4, 0))
+        
+        ttk.Label(bottom_row, text="日期范围:", font=('Microsoft YaHei UI', 8)).pack(side=tk.LEFT, padx=(0, 4))
+        
+        self.date_range_label = ttk.Label(bottom_row, text="-- 至 --", 
+                                         font=('Microsoft YaHei UI', 9, 'bold'),
+                                         foreground='#165DFF')
+        self.date_range_label.pack(side=tk.LEFT)
+        
+        # 默认选中当前周
+        self._select_current_week()
+    
+    def _generate_week_options(self):
+        """生成周选项列表"""
+        weeks = []
+        current_year = datetime.now().year
+        
+        # 从1月1日开始计算
+        jan1 = datetime(current_year, 1, 1)
+        
+        # 找到第一个周一
+        days_since_monday = jan1.weekday()
+        first_monday = jan1 - timedelta(days=days_since_monday)
+        
+        week_num = 1
+        current_date = first_monday
+        
+        while current_date.year == current_year or (current_date + timedelta(days=6)).year == current_year:
+            # 确保这一周至少有一天在当前年内
+            if current_date.year == current_year:
+                end_date = current_date + timedelta(days=6)
+                end_year = end_date.year
+                
+                label = f"第{week_num}周 ({current_date.strftime('%m/%d')}-{end_date.strftime('%m/%d')})"
+                weeks.append((current_date, label))
+            
+            current_date += timedelta(days=7)
+            week_num += 1
+            
+            # 防止无限循环
+            if week_num > 54:
+                break
+        
+        return weeks
+    
+    def _select_current_week(self):
+        """默认选中当前周"""
+        today = datetime.now()
+        
+        # 找到当前天属于哪一周
+        for i, (week_start, label) in enumerate(self.weeks):
+            week_end = week_start + timedelta(days=6)
+            if week_start <= today <= week_end:
+                self.week_var.set(label)
+                self._update_display(week_start)
+                break
+        else:
+            # 如果没找到，尝试选中上一周
+            if self.weeks:
+                last_week = self.weeks[-1]
+                self.week_var.set(last_week[1])
+                self._update_display(last_week[0])
+    
+    def _on_week_selected(self, event=None):
+        """周选择事件"""
+        selected = self.week_var.get()
+        for week_start, label in self.weeks:
+            if label == selected:
+                self._update_display(week_start)
+                break
+    
+    def _update_display(self, week_start):
+        """更新显示"""
+        self._week_start_date = week_start
+        week_end = week_start + timedelta(days=6)
+        
+        # 更新日期范围显示
+        self.date_range_label.config(
+            text=f"{week_start.strftime('%Y-%m-%d')} 至 {week_end.strftime('%Y-%m-%d')}"
+        )
+        
+        # 更新周信息
+        week_num = week_start.isocalendar()[1]
+        self.info_label.config(text=f"周一~周日，共7天")
+    
+    def get_week_start(self):
+        """获取选中的周开始日期（周一）
+        
+        Returns:
+            datetime: 周开始日期
+        """
+        return self._week_start_date
+    
+    def get_date_range(self):
+        """获取日期范围
+        
+        Returns:
+            tuple: (start_date, end_date) 格式为 YYYY-MM-DD 字符串
+        """
+        if self._week_start_date:
+            start = self._week_start_date.strftime('%Y-%m-%d')
+            end = (self._week_start_date + timedelta(days=6)).strftime('%Y-%m-%d')
+            return start, end
+        return None, None

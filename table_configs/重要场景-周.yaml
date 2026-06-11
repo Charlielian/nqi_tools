@@ -1,0 +1,72 @@
+# 重要场景-周报表
+
+name: 重要场景-周
+table_key: 重要场景-小区周
+table_name: appdbv3.a_overview_ispm_lte_cell_w
+fieldtype: '[管理视图]重要场景-小区周粒度'
+api_type: table
+
+dimension:
+  geographicdimension: 小区
+  timedimension: 周
+  enodebField: enodeb_id
+  cgiField: cgi
+  timeField: starttime
+  cellField: cell
+  cityField: city
+
+# 字段列表
+fields:
+  - {feild: starttime, feildName: 记录开始时间, datatype: timestamp, columntype: 2}
+  - {feild: endtime, feildName: 记录结束时间, datatype: timestamp, columntype: 1}
+  - {feild: city, feildName: 所属地市, datatype: character varying, columntype: 1}
+  - {feild: cgi, feildName: CGI, datatype: character varying, columntype: 1}
+  - {feild: freq_name, feildName: 频点, datatype: character varying, columntype: 1}
+  - {feild: cell_name, feildName: 小区名称, datatype: character varying, columntype: 2}
+  - {feild: state, feildName: 网元状态, datatype: character varying, columntype: 1}
+  - {feild: scene, feildName: 场景, datatype: character varying, columntype: 1}
+  - {feild: scene_name, feildName: 场景具体名称, datatype: character varying, columntype: 1}
+  - {feild: upoctudl_avg, feildName: 日平均4G流量（GB）, datatype: decimal, columntype: 1}
+  - {feild: ul_prbuse_rate_max, feildName: 日峰值上行PRB平均利用率, datatype: decimal, columntype: 1}
+  - {feild: dl_prbuse_rate_max, feildName: 日峰值下行PRB平均利用率, datatype: decimal, columntype: 1}
+  - {feild: bh_effectiveconnmax, feildName: 自忙时有效RRC连接最大数, datatype: integer, columntype: 1}
+  - {feild: bh_connmax, feildName: 自忙时RRC连接最大数, datatype: integer, columntype: 1}
+  - {feild: bh_ul_prbuse_rate, feildName: 自忙时上行PRB平均利用率, datatype: decimal, columntype: 1}
+  - {feild: bh_dl_prbuse_rate, feildName: 自忙时下行PRB平均利用率, datatype: decimal, columntype: 1}
+  - {feild: radio_succ_rate, feildName: 无线接通率, datatype: decimal, columntype: 1}
+  - {feild: radio_drop_rate_cell, feildName: 无线掉线率(小区级), datatype: decimal, columntype: 1}
+  - {feild: call_connect_rate, feildName: 呼叫接通率(MTC+MOC), datatype: decimal, columntype: 1}
+  - {feild: volte_drop_rate, feildName: VOLTE掉话率, datatype: decimal, columntype: 1}
+  - {feild: esrvcc_ho_succ_rate, feildName: ESRVCC切换成功率, datatype: decimal, columntype: 1}
+  - {feild: volte_voice_traffic, feildName: VOLTE语音话务量, datatype: decimal, columntype: 1}
+  - {feild: is_highflow, feildName: 是否高流量预警小区, datatype: character varying, columntype: 1}
+  - {feild: is_highload, feildName: 是否高负荷待扩容小区, datatype: character varying, columntype: 1}
+  - {feild: is_dilatation, feildName: 是否扩容小区, datatype: character varying, columntype: 1}
+  - {feild: is_carry, feildName: 是否纳入载波调度, datatype: character varying, columntype: 1}
+  - {feild: is_city_tail, feildName: 是否本地市尾部小区, datatype: character varying, columntype: 1}
+  - {feild: is_province_tail, feildName: 是否全省尾部小区, datatype: character varying, columntype: 1}
+  - {feild: longitude, feildName: 经度, datatype: decimal, columntype: 1}
+  - {feild: latitude, feildName: 维度, datatype: decimal, columntype: 1}
+  - {feild: cover, feildName: 覆盖类型, datatype: character varying, columntype: 1}
+  - {feild: coverlayer, feildName: 覆盖层标识, datatype: character varying, columntype: 1}
+  - {feild: capacitylayer, feildName: 容量层标识, datatype: character varying, columntype: 1}
+  - {feild: cell_scene_name, feildName: 小区所属区域, datatype: character varying, columntype: 1}
+  - {feild: vendor, feildName: 设备厂家, datatype: character varying, columntype: 1}
+  - {feild: freq, feildName: 使用频段, datatype: character varying, columntype: 1}
+  - {feild: flow_coefficient, feildName: 流量系数, datatype: decimal, columntype: 1}
+  - {feild: bandwidth, feildName: 小区带宽, datatype: character varying, columntype: 1}
+  - {feild: is_remote, feildName: 是否拉远, datatype: character varying, columntype: 1}
+  - {feild: station_name, feildName: 所属站点名称, datatype: character varying, columntype: 1}
+
+# 查询条件
+conditions:
+  where:
+    - {feild: starttime, datatype: timestamp, symbol: '>=', val: '{start_date} 00:00:00', whereCon: and, query: true}
+    - {feild: starttime, datatype: timestamp, symbol: '<', val: '{end_date} 23:59:59', whereCon: and, query: true}
+    - {feild: city, datatype: character, symbol: in, val: '{city}', whereCon: and, query: true}
+  fixed_params:
+    draw: 1
+    start: 0
+    length: 200
+    total: 0
+    indexcount: 0

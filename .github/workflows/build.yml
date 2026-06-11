@@ -50,12 +50,37 @@ jobs:
       run: |
         pyinstaller NqiTool.spec
 
+    - name: Prepare release files
+      run: |
+        # 复制内置配置文件到发布目录
+        if (Test-Path "table_configs") {
+          New-Item -Path "release/NqiTool/table_configs" -ItemType Directory -Force
+          Copy-Item "table_configs/*.yaml" "release/NqiTool/table_configs/" -Recurse -ErrorAction SilentlyContinue
+          Write-Host "已复制 table_configs/*.yaml"
+        }
+
+        # 准备自定义配置目录
+        New-Item -Path "release/NqiTool/custom_configs" -ItemType Directory -Force
+        if (Test-Path "custom_configs") {
+          Copy-Item "custom_configs/*" "release/NqiTool/custom_configs/" -Recurse -ErrorAction SilentlyContinue
+        } else {
+          $readmeContent = @"
+# 自定义表格配置
+
+此目录用于存放用户自定义的表格YAML配置文件。
+
+## 使用方法
+
+1. 在本目录创建新的 `.yaml` 文件
+2. 参考下方模板填写配置
+3. 重启程序，表格自动出现
+"@
+          $readmeContent | Out-File -FilePath "release/NqiTool/custom_configs/README.md" -Encoding UTF8
+        }
+
     - name: Package release ZIP
       shell: pwsh
       run: |
-        # 创建发布目录
-        New-Item -Path "release/NqiTool" -ItemType Directory -Force
-
         # 复制 EXE
         Copy-Item "dist/NqiTool.exe" "release/NqiTool/"
 

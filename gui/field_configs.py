@@ -1656,3 +1656,103 @@ INTERFERENCE_5G_ZIMANG_DIMENSION = {
     'cellField': 'nrcell',
     'cityField': 'city',
 }
+
+# ==================== 共站同覆盖小区_4g_5g 字段配置 ====================
+SECTORS_4G_5G_FIELDS = [
+    {'feild': 'cgi', 'feildName': 'CGI', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'city', 'feildName': '地市', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'area', 'feildName': '归属区县', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'station_name', 'feildName': '物理站名', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'sitetype', 'feildName': '站型', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'cover_type', 'feildName': '覆盖类型', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'longitude', 'feildName': '经度', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'latitude', 'feildName': '纬度', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'grid_road', 'feildName': '路测网格', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'azimuth', 'feildName': '小区方向角', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'tilt', 'feildName': '机械下倾角', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'elcontroldecline', 'feildName': '电下倾角', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'height', 'feildName': '天线高度', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'ant_cuid', 'feildName': '天线ID', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'ant_name', 'feildName': '天线名称', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'cell_name', 'feildName': '小区名称', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'freq', 'feildName': '频段', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'channelnum', 'feildName': '频点号', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'state', 'feildName': '小区状态', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'street_name', 'feildName': '乡镇街道', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'channelnum_re', 'feildName': '详细频段', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'sectors_no', 'feildName': '共站同覆盖编号', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'sectors_width', 'feildName': '共站同覆盖宽度', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'freq_ant_num', 'feildName': '最大同频天线数', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'is_sectors_freq', 'feildName': '是否同频天线同共站同覆盖', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'sectors_name', 'feildName': '共站同覆盖名', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'sectors_name_macro', 'feildName': '聚合物理宏站共站同覆盖区域名', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'network_type', 'feildName': '网络制式', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'sectors_id', 'feildName': '扇区id', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'is_coverage', 'feildName': '是否覆盖层', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'cell_scene_name', 'feildName': '小区所属区域', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+    {'feild': 'cell_scene_type', 'feildName': '小区所属区域类型', 'datatype': 'character varying', 'columntype': '1',
+     'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g'},
+]
+
+
+# ==================== 合成45G流量表常量定义 ====================
+# 合成45G流量表需要的数据源表列表
+SYNTHESIZE_45G_TABLES = [
+    '5G小区容量-周',
+    '5G小区容量报表',
+    '5GMR覆盖-小区天',
+    '5G小区性能KPI报表',
+    '重要场景-周',
+    '重要场景-天',
+    '4GMR覆盖-小区天',
+    '共站同覆盖小区_4g_5g',
+]
+
+# 合成表配置（在TableConfig中使用）
+SYNTHESIZE_45G_CONFIG = {
+    'name': '合成45G流量表',
+    'table_key': '合成45G流量表',
+    'is_synthesize': True,  # 标记为合成表
+    'time_granularity': 'week',  # 周粒度
+    'source_tables': SYNTHESIZE_45G_TABLES,
+    'dimension': {
+        'geographicdimension': '小区',
+        'timedimension': '周',
+        'enodebField': 'enodeb_id',
+        'cgiField': 'cgi',
+        'timeField': 'starttime',
+        'cellField': 'cell',
+        'cityField': 'city',
+    }
+}

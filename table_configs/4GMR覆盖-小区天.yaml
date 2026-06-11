@@ -1,0 +1,42 @@
+# 4G MR覆盖-小区天报表
+
+name: 4GMR覆盖-小区天
+table_key: appdbv3.a_common_mro_rsrp_lte_cell
+table_name: appdbv3.a_common_mro_rsrp_lte_cell
+fieldtype: 4G_MRO_RSRP基础性能_小区
+api_type: table
+
+dimension:
+  geographicdimension: 小区，网格，地市，分公司
+  timedimension: 天、周、月
+  enodebField: enodeb_id
+  cgiField: cgi
+  timeField: starttime
+  cellField: cell
+  cityField: city
+
+# 字段列表
+fields:
+  - {feild: starttime, feildName: 开始时间, datatype: character varying, columntype: 1}
+  - {feild: cgi, feildName: cgi, datatype: character varying, columntype: 1}
+  - {feild: cell_name, feildName: 小区名, datatype: character varying, columntype: 1}
+  - {feild: city, feildName: 地市, datatype: character varying, columntype: 1}
+  - {feild: mro_all_rsrp_count, feildName: MRO移动总采样点, datatype: character varying, columntype: 1}
+  - {feild: mro_yd_rsrp_gt_f110, feildName: MRO移动大于等于负110DBM的采样点数, datatype: character varying, columntype: 1}
+  - {feild: mro_yd_rsrp_rate, feildName: MRO移动覆盖率, datatype: character varying, columntype: 1}
+  - {feild: mro_overlap_rsrp_rate, feildName: MRO移动重叠覆盖率, datatype: character varying, columntype: 1}
+  - {feild: mro_overlap_rsrp_count, feildName: MRO移动覆盖采样点数, datatype: character varying, columntype: 1}
+  - {feild: rsrp110_dist_avg, feildName: 平均TA, datatype: character varying, columntype: 1}
+
+# 查询条件
+conditions:
+  where:
+    - {feild: starttime, datatype: timestamp, symbol: '>=', val: '{start_date} 00:00:00', whereCon: and, query: true}
+    - {feild: starttime, datatype: timestamp, symbol: '<', val: '{end_date} 23:59:59', whereCon: and, query: true}
+    - {feild: city, datatype: character, symbol: in, val: '{city}', whereCon: and, query: true}
+  fixed_params:
+    draw: 1
+    start: 0
+    length: 200
+    total: 0
+    indexcount: 0

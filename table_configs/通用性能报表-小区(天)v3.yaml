@@ -1,0 +1,142 @@
+# 通用性能报表-小区(天)v3
+
+name: 通用性能报表-小区(天)v3
+table_key: 通用性能报表-小区(天)v3
+table_name: appdbv3.a_common_pm_lte_cell_d
+fieldtype: 通用性能统计-小区(天)
+api_type: table
+
+dimension:
+  geographicdimension: city
+  timedimension: 天粒度
+  enodebField: enodeb_id
+  cgiField: cgi
+  timeField: starttime
+  cellField: cell
+  cityField: city
+
+# 字段列表（基础字段）
+fields:
+  - {feild: starttime, feildName: 记录开始时间, datatype: timestamp, columntype: 1}
+  - {feild: endtime, feildName: 记录结束时间, datatype: timestamp, columntype: 1}
+  - {feild: city, feildName: 所属地市, datatype: character varying, columntype: 1}
+  - {feild: area, feildName: 所属区县, datatype: character varying, columntype: 1}
+  - {feild: grid, feildName: 责任网格, datatype: character varying, columntype: 1}
+  - {feild: branch, feildName: 人力区县分公司, datatype: character varying, columntype: 1}
+  - {feild: cgi, feildName: CGI, datatype: character varying, columntype: 1}
+  - {feild: cell_name, feildName: 小区名称, datatype: character varying, columntype: 1}
+# 干扰指标字段 (PRB0-99)
+  - {feild: ulmeannl_prb_avg, feildName: 小区RB上行平均干扰电平平均值, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb0, feildName: 小区RB上行平均干扰电平PRB0, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb1, feildName: 小区RB上行平均干扰电平PRB1, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb2, feildName: 小区RB上行平均干扰电平PRB2, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb3, feildName: 小区RB上行平均干扰电平PRB3, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb4, feildName: 小区RB上行平均干扰电平PRB4, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb5, feildName: 小区RB上行平均干扰电平PRB5, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb6, feildName: 小区RB上行平均干扰电平PRB6, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb7, feildName: 小区RB上行平均干扰电平PRB7, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb8, feildName: 小区RB上行平均干扰电平PRB8, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb9, feildName: 小区RB上行平均干扰电平PRB9, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb10, feildName: 小区RB上行平均干扰电平PRB10, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb11, feildName: 小区RB上行平均干扰电平PRB11, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb12, feildName: 小区RB上行平均干扰电平PRB12, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb13, feildName: 小区RB上行平均干扰电平PRB13, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb14, feildName: 小区RB上行平均干扰电平PRB14, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb15, feildName: 小区RB上行平均干扰电平PRB15, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb16, feildName: 小区RB上行平均干扰电平PRB16, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb17, feildName: 小区RB上行平均干扰电平PRB17, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb18, feildName: 小区RB上行平均干扰电平PRB18, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb19, feildName: 小区RB上行平均干扰电平PRB19, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb20, feildName: 小区RB上行平均干扰电平PRB20, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb21, feildName: 小区RB上行平均干扰电平PRB21, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb22, feildName: 小区RB上行平均干扰电平PRB22, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb23, feildName: 小区RB上行平均干扰电平PRB23, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb24, feildName: 小区RB上行平均干扰电平PRB24, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb25, feildName: 小区RB上行平均干扰电平PRB25, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb26, feildName: 小区RB上行平均干扰电平PRB26, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb27, feildName: 小区RB上行平均干扰电平PRB27, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb28, feildName: 小区RB上行平均干扰电平PRB28, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb29, feildName: 小区RB上行平均干扰电平PRB29, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb30, feildName: 小区RB上行平均干扰电平PRB30, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb31, feildName: 小区RB上行平均干扰电平PRB31, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb32, feildName: 小区RB上行平均干扰电平PRB32, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb33, feildName: 小区RB上行平均干扰电平PRB33, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb34, feildName: 小区RB上行平均干扰电平PRB34, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb35, feildName: 小区RB上行平均干扰电平PRB35, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb36, feildName: 小区RB上行平均干扰电平PRB36, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb37, feildName: 小区RB上行平均干扰电平PRB37, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb38, feildName: 小区RB上行平均干扰电平PRB38, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb39, feildName: 小区RB上行平均干扰电平PRB39, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb40, feildName: 小区RB上行平均干扰电平PRB40, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb41, feildName: 小区RB上行平均干扰电平PRB41, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb42, feildName: 小区RB上行平均干扰电平PRB42, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb43, feildName: 小区RB上行平均干扰电平PRB43, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb44, feildName: 小区RB上行平均干扰电平PRB44, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb45, feildName: 小区RB上行平均干扰电平PRB45, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb46, feildName: 小区RB上行平均干扰电平PRB46, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb47, feildName: 小区RB上行平均干扰电平PRB47, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb48, feildName: 小区RB上行平均干扰电平PRB48, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb49, feildName: 小区RB上行平均干扰电平PRB49, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb50, feildName: 小区RB上行平均干扰电平PRB50, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb51, feildName: 小区RB上行平均干扰电平PRB51, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb52, feildName: 小区RB上行平均干扰电平PRB52, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb53, feildName: 小区RB上行平均干扰电平PRB53, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb54, feildName: 小区RB上行平均干扰电平PRB54, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb55, feildName: 小区RB上行平均干扰电平PRB55, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb56, feildName: 小区RB上行平均干扰电平PRB56, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb57, feildName: 小区RB上行平均干扰电平PRB57, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb58, feildName: 小区RB上行平均干扰电平PRB58, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb59, feildName: 小区RB上行平均干扰电平PRB59, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb60, feildName: 小区RB上行平均干扰电平PRB60, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb61, feildName: 小区RB上行平均干扰电平PRB61, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb62, feildName: 小区RB上行平均干扰电平PRB62, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb63, feildName: 小区RB上行平均干扰电平PRB63, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb64, feildName: 小区RB上行平均干扰电平PRB64, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb65, feildName: 小区RB上行平均干扰电平PRB65, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb66, feildName: 小区RB上行平均干扰电平PRB66, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb67, feildName: 小区RB上行平均干扰电平PRB67, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb68, feildName: 小区RB上行平均干扰电平PRB68, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb69, feildName: 小区RB上行平均干扰电平PRB69, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb70, feildName: 小区RB上行平均干扰电平PRB70, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb71, feildName: 小区RB上行平均干扰电平PRB71, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb72, feildName: 小区RB上行平均干扰电平PRB72, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb73, feildName: 小区RB上行平均干扰电平PRB73, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb74, feildName: 小区RB上行平均干扰电平PRB74, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb75, feildName: 小区RB上行平均干扰电平PRB75, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb76, feildName: 小区RB上行平均干扰电平PRB76, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb77, feildName: 小区RB上行平均干扰电平PRB77, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb78, feildName: 小区RB上行平均干扰电平PRB78, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb79, feildName: 小区RB上行平均干扰电平PRB79, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb80, feildName: 小区RB上行平均干扰电平PRB80, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb81, feildName: 小区RB上行平均干扰电平PRB81, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb82, feildName: 小区RB上行平均干扰电平PRB82, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb83, feildName: 小区RB上行平均干扰电平PRB83, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb84, feildName: 小区RB上行平均干扰电平PRB84, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb85, feildName: 小区RB上行平均干扰电平PRB85, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb86, feildName: 小区RB上行平均干扰电平PRB86, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb87, feildName: 小区RB上行平均干扰电平PRB87, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb88, feildName: 小区RB上行平均干扰电平PRB88, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb89, feildName: 小区RB上行平均干扰电平PRB89, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb90, feildName: 小区RB上行平均干扰电平PRB90, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb91, feildName: 小区RB上行平均干扰电平PRB91, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb92, feildName: 小区RB上行平均干扰电平PRB92, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb93, feildName: 小区RB上行平均干扰电平PRB93, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb94, feildName: 小区RB上行平均干扰电平PRB94, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb95, feildName: 小区RB上行平均干扰电平PRB95, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb96, feildName: 小区RB上行平均干扰电平PRB96, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb97, feildName: 小区RB上行平均干扰电平PRB97, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb98, feildName: 小区RB上行平均干扰电平PRB98, datatype: decimal, columntype: 1}
+  - {feild: ulmeannl_prb99, feildName: 小区RB上行平均干扰电平PRB99, datatype: decimal, columntype: 1}
+
+# 查询条件
+conditions:
+  where:
+    - {feild: starttime, datatype: timestamp, symbol: '>=', val: '{start_date} 00:00:00', whereCon: and, query: true}
+    - {feild: starttime, datatype: timestamp, symbol: '<', val: '{end_date} 23:59:59', whereCon: and, query: true}
+    - {feild: city, datatype: character, symbol: in, val: '{city}', whereCon: and, query: true}
+  fixed_params:
+    draw: 1
+    start: 0
+    length: 200
+    total: 0
+    indexcount: 0

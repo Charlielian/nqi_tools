@@ -1,0 +1,75 @@
+# 45G流量与热点评估物理站级报表
+
+name: 45G流量与热点评估物理站级
+table_key: 45G流量与热点评估物理站级
+table_name: appdbv3.a_cap_ltenr_station
+fieldtype: 45G流量与热点评估物理站级
+api_type: table
+
+dimension:
+  geographicdimension: 小区
+  timedimension: 天、周
+  enodebField: gnodeb_id
+  cgiField: cgi
+  timeField: starttime
+  cellField: cell
+  cityField: city
+
+# 字段列表
+fields:
+  - {feild: starttime, feildName: 开始时间, datatype: character varying, columntype: 1}
+  - {feild: endtime, feildName: 结束时间, datatype: character varying, columntype: 1}
+  - {feild: city, feildName: 地市, datatype: character varying, columntype: 1}
+  - {feild: station_name, feildName: 物理站名称, datatype: character varying, columntype: 1}
+  - {feild: station_id, feildName: 物理站ID, datatype: character varying, columntype: 1}
+  - {feild: cover_type, feildName: 覆盖类型, datatype: character varying, columntype: 1}
+  # 站点数量
+  - {feild: gnodeb_count, feildName: 5G逻辑站数量, datatype: character varying, columntype: 1}
+  - {feild: enodeb_count, feildName: 4G逻辑站数量, datatype: character varying, columntype: 1}
+  # 小区数量
+  - {feild: nr_cell_count, feildName: 5G小区数量, datatype: character varying, columntype: 1}
+  - {feild: lte_cell_count, feildName: 4G小区数量, datatype: character varying, columntype: 1}
+  # 4G站点列表
+  - {feild: lte_e_site_list, feildName: E频站点名列表, datatype: character varying, columntype: 1}
+  - {feild: lte_d_site_list, feildName: D频站点名列表, datatype: character varying, columntype: 1}
+  - {feild: lte_f_site_list, feildName: F频站点名列表, datatype: character varying, columntype: 1}
+  - {feild: lte_fdd1800_site_list, feildName: FDD1800站点名列表, datatype: character varying, columntype: 1}
+  - {feild: lte_fdd900_site_list, feildName: FDD900站点名列表, datatype: character varying, columntype: 1}
+  - {feild: lte_reverse_site_list, feildName: 反向4G站点名列表, datatype: character varying, columntype: 1}
+  - {feild: other_lte_site_list, feildName: 其它4G站点列表, datatype: character varying, columntype: 1}
+  # 5G站点列表
+  - {feild: nr_2600_site_list, feildName: 2.6G站点名列表, datatype: character varying, columntype: 1}
+  - {feild: nr_700_site_list, feildName: 700M站点名列表, datatype: character varying, columntype: 1}
+  - {feild: nr_4900_site_list, feildName: 4.9G站点名列表, datatype: character varying, columntype: 1}
+  - {feild: other_nr_site_list, feildName: 其它5G站点列表, datatype: character varying, columntype: 1}
+  # 忙时流量指标
+  - {feild: flow_bh_lte_upoctudl, feildName: 流量忙时4G流量, datatype: character varying, columntype: 1}
+  - {feild: flow_bh_nr_upoctudl, feildName: 流量忙时5G流量, datatype: character varying, columntype: 1}
+  - {feild: flow_bh_total_upoctudl, feildName: 流量忙时45G总流量, datatype: character varying, columntype: 1}
+  - {feild: flow_bh_nr_upoctudl_rate, feildName: 流量忙时5G流量占比, datatype: character varying, columntype: 1}
+  # 忙时RRC连接数
+  - {feild: flow_bh_lte_connmean, feildName: 流量忙时4G RRC连接平均数, datatype: character varying, columntype: 1}
+  - {feild: flow_bh_lte_connmax, feildName: 流量忙时4G RRC连接最大数, datatype: character varying, columntype: 1}
+  - {feild: flow_bh_nr_connmean, feildName: 流量忙时5G RRC连接平均数, datatype: character varying, columntype: 1}
+  - {feild: flow_bh_nr_connmax, feildName: 流量忙时5G RRC连接最大数, datatype: character varying, columntype: 1}
+  # 忙时利用率
+  - {feild: flow_bh_lte_use_rate, feildName: 流量忙时4G利用率, datatype: character varying, columntype: 1}
+  - {feild: lte_hot_level, feildName: 流量忙时4G热点等级, datatype: character varying, columntype: 1}
+  # 日流量指标
+  - {feild: lte_upoctudl, feildName: 4G日流量, datatype: character varying, columntype: 1}
+  - {feild: nr_upoctudl, feildName: 5G日流量, datatype: character varying, columntype: 1}
+  - {feild: total_upoctudl, feildName: 45G日总流量, datatype: character varying, columntype: 1}
+  - {feild: nr_upoctudl_rate, feildName: 5G日流量占比, datatype: character varying, columntype: 1}
+
+# 查询条件
+conditions:
+  where:
+    - {feild: starttime, datatype: timestamp, symbol: '>=', val: '{start_date} 00:00:00', whereCon: and, query: true}
+    - {feild: starttime, datatype: timestamp, symbol: '<', val: '{end_date} 23:59:59', whereCon: and, query: true}
+    - {feild: city, datatype: character, symbol: in, val: '{city}', whereCon: and, query: true}
+  fixed_params:
+    draw: 1
+    start: 0
+    length: 200
+    total: 0
+    indexcount: 0

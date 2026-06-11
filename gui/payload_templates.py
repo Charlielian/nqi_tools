@@ -1396,13 +1396,13 @@ def get_5g_kpi_payload(start_date=None, end_date=None, city=None):
     return {
         'draw': 1, 'start': 0, 'length': 200, 'total': 0,
         'geographicdimension': '小区，网格，地市，分公司',
-        'timedimension': '天',
+        'timedimension': '小时,天,周,月',
         'enodebField': 'gnodeb_id', 'cgiField': 'ncgi', 'timeField': 'starttime',
         'cellField': 'nrcell', 'cityField': 'city',
         'columns': _build_columns_param([f[0] for f in fields]),
         'order': [{'column': 0, 'dir': 'desc'}],
         'search': {'value': '', 'regex': False},
-        'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
+        'result': {'result': result_list, 'tableParams': {'supporteddimension': '0', 'supportedtimedimension': '1'}, 'columnname': ''},
         'where': [
             {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
             {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
@@ -1720,6 +1720,125 @@ def get_4g_mr_payload(start_date=None, end_date=None, city=None):
         'where': [
             {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
             {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 0
+    }
+
+
+# ==================== 共站同覆盖小区_4g_5g ====================
+def get_sectors_4g_5g_payload(start_date=None, end_date=None, city=None):
+    """共站同覆盖小区_4g_5g报表payload（标准DataTables格式）
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)，工参表通常不需要
+        end_date: 结束日期 (YYYY-MM-DD)，工参表通常不需要
+        city: 地市名称
+    """
+    # 默认日期（工参表通常使用当前日期）
+    if start_date is None:
+        start_date = '2026-06-10'
+    if end_date is None:
+        end_date = '2026-06-10'
+    if city is None:
+        city = '阳江'
+
+    # 字段列表（标准化格式）
+    result_list = [
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '物理站名', 'feild': 'station_name', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '站型', 'feild': 'sitetype', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '覆盖类型', 'feild': 'cover_type', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '经度', 'feild': 'longitude', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '纬度', 'feild': 'latitude', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '路测网格', 'feild': 'grid_road', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '小区方向角', 'feild': 'azimuth', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '机械下倾角', 'feild': 'tilt', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '电下倾角', 'feild': 'elcontroldecline', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '天线高度', 'feild': 'height', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '天线ID', 'feild': 'ant_cuid', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '天线名称', 'feild': 'ant_name', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': 'CGI', 'feild': 'cgi', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '小区名称', 'feild': 'cell_name', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '使用频段', 'feild': 'freq', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '中心载频的信道号', 'feild': 'channelnum', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '小区状态', 'feild': 'state', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '地市', 'feild': 'city', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '归属区县', 'feild': 'area', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '乡镇街道', 'feild': 'street_name', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '详细频段', 'feild': 'channelnum_re', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '共站同覆盖编号', 'feild': 'sectors_no', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '共站同覆盖宽度', 'feild': 'sectors_width', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '最大同频天线数', 'feild': 'freq_ant_num', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '是否同频天线同共站同覆盖', 'feild': 'is_sectors_freq', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '共站同覆盖名', 'feild': 'sectors_name', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '聚合物理宏站共站同覆盖区域名', 'feild': 'sectors_name_macro', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '网络制式', 'feild': 'network_type', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '扇区id', 'feild': 'sectors_id', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '是否覆盖层', 'feild': 'is_coverage', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '小区所属区域', 'feild': 'cell_scene_name', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+        {'feildtype': '共站同覆盖小区_4g_5g', 'table': 'appdbv3.a_struct_sectors_d', 'tableName': '共站同覆盖小区_4g_5g',
+         'datatype': '1', 'columntype': 1, 'feildName': '小区所属区域类型', 'feild': 'cell_scene_type', 'poly': '无', 'anyWay': '无', 'chart': '无', 'chartpoly': '无'},
+    ]
+
+    # 字段名列表（用于columns参数）
+    field_names = [r['feild'] for r in result_list]
+
+    return {
+        'draw': 1,
+        'start': 0,
+        'length': 200,
+        'total': 0,
+        'geographicdimension': '小区',
+        'timedimension': '天粒度',
+        'enodebField': 'enodeb_id',
+        'cgiField': 'cgi',
+        'timeField': 'starttime',
+        'cellField': 'cell',
+        'cityField': 'city',
+        'columns': [
+            {'data': fn, 'name': '', 'searchable': True, 'orderable': True, 'search': {'value': '', 'regex': False}}
+            for fn in field_names
+        ],
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {
+            'result': result_list,
+            'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''},
+            'columnname': ''
+        },
+        'where': [
+            {'datatype': 'character', 'feild': 'curr_flag', 'feildName': '', 'symbol': '=', 'val': '1', 'whereCon': 'and', 'query': True},
             {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
         ],
         'indexcount': 0

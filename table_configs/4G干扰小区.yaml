@@ -1,0 +1,42 @@
+# 4G干扰小区报表
+# 用于查询4G干扰小区的干扰情况
+
+name: 4G干扰小区
+table_key: 4G干扰报表（忙时）
+table_name: appdbv3.a_interfere_lte_cell_zb2_d
+fieldtype: 4G干扰报表（忙时）
+api_type: search
+
+dimension:
+  geographicdimension: 小区
+  timedimension: 天
+  enodebField: enodeb_id
+  cgiField: cgi
+  timeField: starttime
+  cellField: cell
+  cityField: city
+
+# 字段列表
+fields:
+  - {feild: starttime, feildName: 数据时间, datatype: '1', columntype: 1}
+  - {feild: endtime, feildName: 结束时间, datatype: '1', columntype: 1}
+  - {feild: cgi, feildName: CGI, datatype: character varying, columntype: 1}
+  - {feild: cell_name, feildName: 小区名, datatype: character varying, columntype: 1}
+  - {feild: freq, feildName: 频段, datatype: character varying, columntype: 1}
+  - {feild: micro_grid, feildName: 微网格标识, datatype: character varying, columntype: 1}
+  - {feild: bandwidth, feildName: 系统带宽, datatype: character varying, columntype: 1}
+  - {feild: averagevalue, feildName: 平均干扰电平, datatype: character varying, columntype: 1}
+  - {feild: is_interfere, feildName: 是否干扰小区, datatype: character varying, columntype: 1}
+
+# 查询条件
+conditions:
+  where:
+    - {feild: starttime, datatype: timestamp, symbol: '>=', val: '{start_date} 00:00:00', whereCon: and, query: true}
+    - {feild: starttime, datatype: timestamp, symbol: '<', val: '{end_date} 23:59:59', whereCon: and, query: true}
+    - {feild: city, datatype: character, symbol: in, val: '{city}', whereCon: and, query: true}
+  fixed_params:
+    draw: 1
+    start: 0
+    length: 200
+    total: 0
+    indexcount: 0

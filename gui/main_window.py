@@ -9,8 +9,11 @@ from tkinter import ttk, scrolledtext, messagebox
 import threading
 import logging
 import os
-from datetime import datetime, timedelta
 import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import pandas as pd
+from datetime import datetime, timedelta
 
 from gui.widgets import LogTextHandler, TableConfig, MultiSelectDropdown
 from gui.components import SearchableCombobox, CalendarDialog, Tooltip
@@ -295,6 +298,8 @@ class NqiToolGUI:
             '全程完好率': ['4G全程完好率报表', '5G全程完好率报表'],
             '语音小区': ['4G语音小区', '5G语音小区'],
             '流量热点': ['45G流量与热点评估物理站级'],
+            '共站同覆盖': ['共站同覆盖小区_4g_5g'],
+            '专项功能': ['合成45G流量表'],
         }
 
         all_tables = []
@@ -307,7 +312,8 @@ class NqiToolGUI:
             all_tables,
             width=16,
             select_all=False,
-            max_dropdown_items=5
+            max_dropdown_items=5,
+            on_change_callback=self._on_table_selection_changed
         )
         self.table_dropdown.pack(side=tk.LEFT, padx=(0, 6))
 
@@ -386,11 +392,11 @@ class NqiToolGUI:
             self.quick_date_btns[days] = btn
 
         # 第二行：日期范围（单独一行）
-        date_row = tk.Frame(body, bg='white')
-        date_row.pack(fill=tk.X, pady=(0, 6))
+        self.date_row = tk.Frame(body, bg='white')
+        self.date_row.pack(fill=tk.X, pady=(0, 6))
 
         # 日期范围
-        date_frame = tk.Frame(date_row, bg='white')
+        date_frame = tk.Frame(self.date_row, bg='white')
         date_frame.pack(side=tk.LEFT, padx=(0, 15))
         tk.Label(date_frame, text="日期范围", font=('Microsoft YaHei UI', 8),
                 bg='white', fg='#5f6368').pack(anchor='w')
@@ -492,6 +498,34 @@ class NqiToolGUI:
                                    command=self._on_field_mode_changed)
         dynamic_rb.pack(side=tk.LEFT)
 
+        # 新增：配置来源切换（用于验证YAML改造是否成功）
+        config_source_frame = tk.Frame(field_mode_row, bg='white')
+        config_source_frame.pack(side=tk.LEFT, padx=(20, 0))
+        tk.Label(config_source_frame, text="配置来源", font=('Microsoft YaHei UI', 8),
+                bg='white', fg='#5f6368').pack(anchor='w')
+
+        config_source_inner = tk.Frame(config_source_frame, bg='white')
+        config_source_inner.pack(pady=(2, 0))
+
+        self.config_source_var = tk.StringVar(value='yaml')
+        yaml_rb = tk.Radiobutton(config_source_inner, text="YAML",
+                                 variable=self.config_source_var, value='yaml',
+                                 font=('Microsoft YaHei UI', 8, 'bold'),
+                                 bg='white', fg='#202124',
+                                 activebackground='white',
+                                 cursor='hand2',
+                                 command=self._on_config_source_changed)
+        yaml_rb.pack(side=tk.LEFT, padx=(0, 8))
+
+        old_rb = tk.Radiobutton(config_source_inner, text="旧代码",
+                               variable=self.config_source_var, value='old',
+                               font=('Microsoft YaHei UI', 8, 'bold'),
+                               bg='white', fg='#202124',
+                               activebackground='white',
+                               cursor='hand2',
+                               command=self._on_config_source_changed)
+        old_rb.pack(side=tk.LEFT)
+
         # 第三行：多日模式选项（在日期范围下方，按钮上方）
         mode_row = tk.Frame(body, bg='white')
         mode_row.pack(fill=tk.X, pady=(0, 6))
@@ -521,6 +555,29 @@ class NqiToolGUI:
         self.multi_day_per_sheet_cb = multi_day_per_sheet_cb
         multi_day_per_sheet_cb.pack(side=tk.LEFT, padx=(6, 0))
 
+        self.multi_day_per_city_var = tk.BooleanVar(value=False)
+        multi_day_per_city_cb = tk.Checkbutton(mode_frame, text="按日+按地市导出",
+                                              variable=self.multi_day_per_city_var,
+                                              font=('Microsoft YaHei UI', 8),
+                                              bg='white', fg='#202124',
+                                              selectcolor='#e8f0fe',
+                                              activebackground='white',
+                                              state=tk.DISABLED,
+                                              command=self._on_multi_day_per_city_toggle)
+        self.multi_day_per_city_cb = multi_day_per_city_cb
+        multi_day_per_city_cb.pack(side=tk.LEFT, padx=(6, 0))
+
+        self.single_city_parallel_var = tk.BooleanVar(value=False)
+        single_city_parallel_cb = tk.Checkbutton(mode_frame, text="单地市多线程",
+                                                variable=self.single_city_parallel_var,
+                                                font=('Microsoft YaHei UI', 8),
+                                                bg='white', fg='#202124',
+                                                selectcolor='#e8f0fe',
+                                                activebackground='white',
+                                                command=self._on_single_city_parallel_toggle)
+        self.single_city_parallel_cb = single_city_parallel_cb
+        single_city_parallel_cb.pack(side=tk.LEFT, padx=(6, 0))
+
         # 第四行：操作按钮
         btn_row = tk.Frame(body, bg='white')
         btn_row.pack(fill=tk.X, pady=(4, 0))
@@ -544,6 +601,15 @@ class NqiToolGUI:
                  bg='#f0f2f5', fg='#202124', bd=1,
                  cursor='arrow', relief='raised', padx=12, pady=5,
                  command=self.open_output_dir).pack(side=tk.RIGHT)
+
+        # 周选择器容器（用于合成45G流量表时显示）
+        self.week_selector_container = tk.Frame(body, bg='white')
+        self.week_selector_container.pack(fill=tk.X, pady=(8, 0))
+        self.week_selector_container.pack_forget()  # 默认隐藏
+
+        from gui.widgets import WeekSelector
+        self.week_selector = WeekSelector(self.week_selector_container)
+        self.week_selector.pack(fill=tk.X)
 
     def _build_bottom_section(self, parent):
         """构建底部日志区域"""
@@ -634,6 +700,30 @@ class NqiToolGUI:
         # 窗口关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
 
+        # 绑定表格选择事件
+        self.table_dropdown.entry.bind('<KeyRelease>', self._on_table_dropdown_change)
+        self.table_dropdown.entry.bind('<ButtonRelease-1>', self._on_table_dropdown_change)
+
+    def _on_table_dropdown_change(self, event=None):
+        """表格下拉框内容变化时触发"""
+        # 使用 after 方法延迟执行，避免过早触发
+        self.root.after(100, self._check_synthesize_mode)
+
+    def _check_synthesize_mode(self):
+        """检查是否切换到合成45G流量表模式"""
+        selected = self.table_dropdown.get_selected()
+
+        # 检查是否选中了合成45G流量表
+        is_synthesize = '合成45G流量表' in selected
+
+        if is_synthesize:
+            # 显示周选择器，隐藏日期选择器
+            self.week_selector_container.pack(fill=tk.X, pady=(8, 0))
+            # 可以考虑隐藏日期区域，但暂时保留
+        else:
+            # 隐藏周选择器
+            self.week_selector_container.pack_forget()
+
     def _show_help(self):
         """显示帮助信息"""
         help_text = """
@@ -701,12 +791,26 @@ F1        - 显示此帮助
         """按日查询切换事件"""
         if self.multi_day_var.get():
             self.multi_day_per_sheet_cb.config(state=tk.NORMAL)
+            self.multi_day_per_city_cb.config(state=tk.NORMAL)
+            self.single_city_parallel_var.set(False)
+            self.single_city_parallel_cb.config(state=tk.DISABLED)
         else:
             self.multi_day_per_sheet_var.set(False)
             self.multi_day_per_sheet_cb.config(state=tk.DISABLED)
+            self.multi_day_per_city_var.set(False)
+            self.multi_day_per_city_cb.config(state=tk.DISABLED)
+            self.single_city_parallel_cb.config(state=tk.NORMAL)
 
     def _on_multi_day_per_sheet_toggle(self):
         """按日分Sheet切换事件"""
+        pass
+
+    def _on_multi_day_per_city_toggle(self):
+        """按日+按地市导出切换事件"""
+        pass
+
+    def _on_single_city_parallel_toggle(self):
+        """单地市多线程切换事件"""
         pass
 
     def _on_custom_fields_toggle(self):
@@ -716,11 +820,40 @@ F1        - 显示此帮助
         else:
             self.select_fields_btn.config(state=tk.DISABLED)
 
+    def _on_table_selection_changed(self, selected_tables):
+        """表格选择变化事件"""
+        # 检查是否选择了合成45G流量表
+        if '合成45G流量表' in selected_tables:
+            # 显示周选择器，隐藏日期选择器
+            self.week_selector_container.pack(fill=tk.X, pady=(8, 0))
+            self.date_row.pack_forget()  # 隐藏日期范围选择
+        else:
+            # 隐藏周选择器，显示日期选择器
+            self.week_selector_container.pack_forget()
+            self.date_row.pack(fill=tk.X, pady=(0, 6))  # 显示日期范围选择
+
     def _on_field_mode_changed(self):
         """字段获取方式切换事件"""
         mode = self.field_mode_var.get()
         mode_text = "硬编码" if mode == 'hardcode' else "动态获取"
         self.log(f"切换字段获取方式: {mode_text}", "INFO")
+
+    def _on_config_source_changed(self):
+        """配置来源切换事件 - 用于验证YAML改造是否成功"""
+        source = self.config_source_var.get()
+        from gui.widgets import TableConfig
+
+        if source == 'yaml':
+            TableConfig.set_config_source('yaml')
+            self.log("已切换到 YAML 配置源", "INFO")
+            # 显示YAML支持的表格数量
+            yaml_count = len(TableConfig._get_yaml_loader().get_all_names())
+            self.log(f"  YAML配置支持 {yaml_count} 个表格", "INFO")
+        else:
+            TableConfig.set_config_source('old')
+            self.log("已切换到旧代码配置源", "INFO")
+            old_count = len(TableConfig.TABLE_CONFIGS)
+            self.log(f"  旧代码配置支持 {old_count} 个表格", "INFO")
 
     def _show_field_selector(self):
         """显示字段选择窗口"""
@@ -1059,6 +1192,15 @@ F1        - 显示此帮助
             messagebox.showwarning("警告", "请选择要查询的数据表")
             return
 
+        # 检查是否选择了合成45G流量表
+        if '合成45G流量表' in selected_tables:
+            if len(selected_tables) > 1:
+                messagebox.showwarning("警告", "合成45G流量表必须单独选择，不能与其他表同时选择")
+                return
+            # 启动合成45G流量表流程
+            self._on_synthesize_45g()
+            return
+
         # 获取日期范围
         start_date = f"{self.start_year_var.get()}-{self.start_month_var.get():02d}-{self.start_day_var.get():02d}"
         end_date = f"{self.end_year_var.get()}-{self.end_month_var.get():02d}-{self.end_day_var.get():02d}"
@@ -1087,6 +1229,88 @@ F1        - 显示此帮助
         self.query_thread.daemon = True
         self.query_thread.start()
 
+    def _on_synthesize_45g(self):
+        """合成45G流量表入口"""
+        # 检查是否已登录
+        if not self.session or not self.jxcx:
+            messagebox.showwarning("警告", "请先登录")
+            return
+
+        # 获取周选择器中的日期范围
+        week_start = self.week_selector.get_week_start()
+        if not week_start:
+            messagebox.showwarning("警告", "请选择周")
+            return
+
+        # 获取选中的地市
+        selected_cities = self.city_dropdown.get_selected()
+        city = ",".join(selected_cities) if selected_cities else ""
+
+        self.is_querying = True
+        self.extract_btn.config(state=tk.DISABLED, text="合成中...")
+        self.stop_btn.config(state=tk.NORMAL)
+        self.status_text.config(text="合成中...")
+        self.status_dot.config(fg='#fbbf24')  # 黄色
+
+        # 重置进度条
+        self.reset_progress()
+
+        start_date, end_date = self.week_selector.get_date_range()
+        self.log("=" * 60, "INFO")
+        self.log("开始合成45G流量表", "INFO")
+        self.log(f"周范围: {start_date} 至 {end_date}", "INFO")
+        self.log(f"地市: {city if city else '全部'}", "INFO")
+        self.log("=" * 60, "INFO")
+
+        # 启动合成线程
+        self.query_thread = threading.Thread(
+            target=self._synthesize_worker,
+            args=(week_start, city)
+        )
+        self.query_thread.daemon = True
+        self.query_thread.start()
+
+    def _synthesize_worker(self, week_start, city):
+        """合成45G流量表工作线程"""
+        try:
+            from core.flow_table_builder import synthesize_45g_flow_table
+
+            # 创建进度回调函数
+            def progress_callback(message):
+                self.root.after(0, lambda m=message: self.log(m, "INFO"))
+
+            # 执行合成
+            success = synthesize_45g_flow_table(
+                self.session,
+                city,
+                week_start,
+                progress_callback
+            )
+
+            self.root.after(0, lambda s=success: self._on_synthesize_complete(s))
+
+        except Exception as e:
+            import traceback
+            self.root.after(0, lambda: self.log(f"合成失败: {e}\n{traceback.format_exc()}", "ERROR"))
+            self.root.after(0, lambda: self._on_synthesize_complete(False))
+
+    def _on_synthesize_complete(self, success):
+        """合成完成回调"""
+        self.is_querying = False
+        self.extract_btn.config(state=tk.NORMAL, text="▶ 开始提取")
+        self.stop_btn.config(state=tk.DISABLED)
+        self.status_text.config(text="就绪")
+        self.status_dot.config(fg='#a5b4fc')
+
+        if success:
+            self.log("=" * 60, "INFO")
+            self.log("45G流量表合成完成！", "SUCCESS")
+            self.log("=" * 60, "INFO")
+            messagebox.showinfo("完成", "45G流量表合成完成！\n请查看输出目录。")
+        else:
+            self.log("45G流量表合成失败", "ERROR")
+            messagebox.showerror("错误", "45G流量表合成失败，请查看日志。")
+
     def _on_stop(self):
         """停止查询"""
         self.log("正在停止查询...", "WARNING")
@@ -1105,6 +1329,26 @@ F1        - 显示此帮助
             total_tables = len(table_names)
             multi_day = self.multi_day_var.get()
             multi_day_per_sheet = self.multi_day_per_sheet_var.get()
+            multi_day_per_city = self.multi_day_per_city_var.get()
+            single_city_parallel = self.single_city_parallel_var.get()
+
+            # 输出当前配置来源
+            config_source = self.config_source_var.get()
+            self.log(f"当前配置来源: {config_source} (yaml=使用YAML配置, old=使用旧代码配置)", "INFO")
+
+            selected_city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
+            should_parallel_tables = (
+                single_city_parallel
+                and not multi_day
+                and len(selected_city_list) == 1
+                and len(table_names) > 1
+            )
+
+            if should_parallel_tables:
+                self.log(f"单地市多线程模式已启用: {selected_city_list[0]}，共 {len(table_names)} 个表", "INFO")
+                self._query_tables_parallel(table_names, start_date, end_date, selected_city_list[0], config_source)
+                self.root.after(0, self._on_query_complete)
+                return
 
             for idx, table_name in enumerate(table_names):
                 self.log(f"正在查询: {table_name}", "INFO")
@@ -1122,16 +1366,20 @@ F1        - 显示此帮助
                     self.log(f"4G语音小区报表：VoLTE + EPSFB 联合查询", "INFO")
                     self._query_4g_voice_table(
                         table_config, start_date, end_date, city,
-                        multi_day, multi_day_per_sheet
+                        multi_day, multi_day_per_sheet, multi_day_per_city
                     )
                     self.log(f"查询完成: {table_name}", "SUCCESS")
                     continue
 
                 # 检查是否有硬编码的payload函数
                 payload_func = table_config.get('payload_func')
+
+                # 检查是否有YAML配置的条件（用于构建payload）
+                yaml_conditions = table_config.get('conditions')
+                has_yaml_conditions = yaml_conditions and isinstance(yaml_conditions, dict) and yaml_conditions.get('where')
+
                 if payload_func:
-                    # 检查是否是工参报表（使用__gongcan__标记）
-                    # 先获取payload模板看看是否为工参报表
+                    # 使用Python payload函数（向后兼容）
                     payload_template = payload_func()
                     if payload_template and payload_template.get('__gongcan__'):
                         # 工参报表需要特殊处理（不需要时间条件）
@@ -1180,74 +1428,99 @@ F1        - 显示此帮助
                             current_date += timedelta(days=1)
 
                         total_days = len(dates)
-                        self.log(f"按日查询模式: 共 {total_days} 天", "INFO")
+                        selected_city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
+                        should_split_by_city = multi_day_per_city and len(selected_city_list) >= 1
+                        query_cities = selected_city_list if should_split_by_city else ([city] if city else [])
 
-                        all_dfs = []  # 用于收集所有日数据
+                        # 构建所有查询任务：(query_date, query_city, city_label)
+                        tasks = []
+                        for query_date in dates:
+                            for query_city in query_cities:
+                                tasks.append((query_date, query_city, query_city or '全部地市'))
 
-                        for day_idx, query_date in enumerate(dates):
-                            self.log(f"查询 {table_name} [{day_idx + 1}/{total_days}]: {query_date}", "INFO")
-                            self.update_progress(idx + day_idx / total_days, total_tables,
-                                               f"查询 {table_name}: {query_date}")
+                        total_tasks = len(tasks)
+                        self.log(f"按日查询模式: 共 {total_tasks} 个任务 ({total_days} 天 x {len(query_cities)} 地市)", "INFO")
+                        if should_split_by_city:
+                            self.log(f"按日+按地市导出模式: 共 {len(query_cities)} 个地市", "INFO")
 
-                            # 调用payload_func，传入单日日期
-                            payload = payload_func(query_date, query_date, city)
+                        calc_columns = table_config.get('calc_columns', [])
+                        add_calc = bool(calc_columns)
+                        all_dfs = []
+                        city_day_dfs = []
 
-                            if payload:
-                                # 调试日志：输出where条件中的日期
+                        def _query_single_task(task_data):
+                            q_date, q_city, q_city_label = task_data
+                            try:
+                                payload = payload_func(q_date, q_date, q_city)
+                                if not payload:
+                                    return None, None
                                 if 'where' in payload:
                                     for cond in payload['where']:
                                         if 'starttime' in cond.get('feild', '') and 'time' in cond.get('feild', '').lower():
-                                            self.log(f"  [调试] 日期条件: {cond.get('feild')} {cond.get('symbol')} {cond.get('val')}", "INFO")
+                                            pass  # 调试日志移至主线程
                                 df = self.jxcx.get_table(payload, report_name=table_name)
-                                if not df.empty:
-                                    # 检查是否需要添加计算列（全程完好率报表）
-                                    calc_columns = table_config.get('calc_columns', [])
-                                    add_calc = bool(calc_columns)
+                                if df.empty:
+                                    return None, None
+                                if add_calc:
+                                    if '4G全程完好率' in table_name:
+                                        df = self._add_4g_wanchenglv_calc_columns(df)
+                                    elif '5G全程完好率' in table_name:
+                                        df = self._add_5g_wanchenglv_calc_columns(df)
+                                return q_date, q_city_label, df
+                            except Exception as e:
+                                return None, {'date': q_date, 'city': q_city_label, 'error': str(e)}
 
-                                    if multi_day_per_sheet:
-                                        # 按日分Sheet模式：每天一个Sheet
-                                        if add_calc:
-                                            try:
-                                                if '4G全程完好率' in table_name:
-                                                    df = self._add_4g_wanchenglv_calc_columns(df)
-                                                elif '5G全程完好率' in table_name:
-                                                    df = self._add_5g_wanchenglv_calc_columns(df)
-                                                self.log(f"  [计算列] {query_date} 计算列添加完成", "SUCCESS")
-                                            except Exception as e:
-                                                self.log(f"  [计算列] {query_date} 计算列添加异常: {e}", "WARNING")
-                                        all_dfs.append((query_date.replace('-', ''), df))
+                        completed_tasks = 0
+                        with ThreadPoolExecutor(max_workers=min(8, total_tasks)) as executor:
+                            futures = {executor.submit(_query_single_task, task): task for task in tasks}
+                            for future in as_completed(futures):
+                                result = future.result()
+                                completed_tasks += 1
+                                done_pct = completed_tasks / total_tasks
+                                self.root.after(0, lambda p=done_pct, t=completed_tasks: self.update_progress(
+                                    idx + p / total_tables, total_tables,
+                                    f"查询 {table_name} [{t}/{total_tasks}]"))
+                                if result[0] is not None:
+                                    q_date, q_city_label, df = result
+                                    if should_split_by_city:
+                                        city_day_dfs.append((f"{q_date.replace('-', '')}_{q_city_label}", df))
+                                        city_filename = f"{table_name}_{q_date}_{q_city_label}.xlsx"
+                                        city_filepath = export_to_excel(df, city_filename, table_name)
+                                        if city_filepath:
+                                            self.root.after(0, lambda fp, cnt, dt=q_date, cl=q_city_label:
+                                                self.log(f"  {dt} {cl}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
+                                                city_filepath, len(df))
+                                    elif multi_day_per_sheet:
+                                        all_dfs.append((q_date.replace('-', ''), df))
                                     else:
-                                        # 按日分文件模式：每天一个文件
-                                        if add_calc:
-                                            try:
-                                                if '4G全程完好率' in table_name:
-                                                    df = self._add_4g_wanchenglv_calc_columns(df)
-                                                elif '5G全程完好率' in table_name:
-                                                    df = self._add_5g_wanchenglv_calc_columns(df)
-                                                self.log(f"  [计算列] {query_date} 计算列添加完成", "SUCCESS")
-                                            except Exception as e:
-                                                self.log(f"  [计算列] {query_date} 计算列添加异常: {e}", "WARNING")
-                                        day_filename = f"{table_name}_{query_date}.xlsx"
+                                        all_dfs.append(df)
+                                        day_filename = f"{table_name}_{q_date}.xlsx"
                                         day_filepath = export_to_excel(df, day_filename, table_name)
                                         if day_filepath:
-                                            self.log(f"  {query_date}: {len(df)} 条数据 -> {os.path.basename(day_filepath)}", "SUCCESS")
-                                        all_dfs.append(df)
+                                            self.root.after(0, lambda fp, cnt, dt=q_date:
+                                                self.log(f"  {dt}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
+                                                day_filepath, len(df))
+                                elif result[1] is not None:
+                                    err = result[1]
+                                    self.root.after(0, lambda e=err:
+                                        self.log(f"  查询异常 [{e['date']} {e['city']}]: {e['error']}", "ERROR"))
 
-                        # 按日分Sheet模式：合并所有日到同一文件
+                        if should_split_by_city and city_day_dfs:
+                            self.log(f"按日+按地市导出完成: 共导出 {len(city_day_dfs)} 个文件", "SUCCESS")
+
                         if multi_day_per_sheet and all_dfs:
                             day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
                             self._export_multi_sheet(day_filename, all_dfs, table_name)
                             self.log(f"按日分Sheet导出完成: {day_filename}", "SUCCESS")
 
-                        # 按日分文件模式：合并所有日到同一文件
-                        if not multi_day_per_sheet and all_dfs:
+                        if not should_split_by_city and not multi_day_per_sheet and all_dfs:
                             combined_df = pd.concat(all_dfs, ignore_index=True)
                             day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
                             combined_filepath = export_to_excel(combined_df, day_filename, table_name)
                             if combined_filepath:
                                 self.log(f"按日查询导出完成: {os.path.basename(combined_filepath)} ({len(combined_df)} 条)", "SUCCESS")
 
-                        if not all_dfs:
+                        if not all_dfs and not city_day_dfs:
                             self.log(f"查询结果为空: {table_name}", "WARNING")
                     else:
                         # 普通模式：按日期范围查询
@@ -1288,6 +1561,38 @@ F1        - 显示此帮助
                     self.log(f"查询完成: {table_name}", "SUCCESS")
                     continue
 
+                # 处理YAML配置的payload
+                if has_yaml_conditions:
+                    self.log(f"使用YAML配置构建payload", "INFO")
+                    # 使用TableConfig的build_payload_from_yaml方法构建payload
+                    yaml_payload = TableConfig.build_payload_from_yaml(table_name, start_date, end_date, city)
+                    if yaml_payload:
+                        df = self.jxcx.get_table(yaml_payload, report_name=table_name)
+                        if not df.empty:
+                            # 检查是否需要添加计算列
+                            calc_columns = table_config.get('calc_columns', [])
+                            if calc_columns:
+                                self.log(f"[计算列] 开始为 {table_name} 添加计算列: {calc_columns}", "INFO")
+                                try:
+                                    if '4G全程完好率' in table_name:
+                                        df = self._add_4g_wanchenglv_calc_columns(df)
+                                    elif '5G全程完好率' in table_name:
+                                        df = self._add_5g_wanchenglv_calc_columns(df)
+                                    self.log(f"[计算列] {table_name} 计算列添加完成", "SUCCESS")
+                                except Exception as e:
+                                    self.log(f"[计算列] {table_name} 计算列添加异常: {e}", "ERROR")
+
+                            filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                            filepath = export_to_excel(df, filename, table_name)
+                            if filepath:
+                                self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
+                            else:
+                                self.log(f"导出失败: {table_name}", "ERROR")
+                        else:
+                            self.log(f"查询结果为空: {table_name}", "WARNING")
+                    self.log(f"查询完成: {table_name}", "SUCCESS")
+                    continue
+
                 # 获取维度参数和字段配置
                 dimension = table_config.get('dimension', {})
                 # 根据用户选择的模式决定字段获取方式
@@ -1309,7 +1614,7 @@ F1        - 显示此帮助
                     self.log(f"4G语音小区报表：VoLTE + EPSFB 联合查询", "INFO")
                     self._query_4g_voice_table(
                         table_config, start_date, end_date, city,
-                        multi_day, multi_day_per_sheet
+                        multi_day, multi_day_per_sheet, multi_day_per_city
                     )
                     self.log(f"查询完成: {table_name}", "SUCCESS")
                     continue
@@ -1347,7 +1652,6 @@ F1        - 显示此帮助
 
                 # 非工参报表：按日查询处理
                 if multi_day:
-                    # 按日查询模式：每天分别查询
                     current_date = datetime.strptime(start_date, '%Y-%m-%d')
                     end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
                     dates = []
@@ -1356,68 +1660,100 @@ F1        - 显示此帮助
                         current_date += timedelta(days=1)
 
                     total_days = len(dates)
-                    self.log(f"按日查询模式: 共 {total_days} 天", "INFO")
+                    selected_city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
+                    should_split_by_city = multi_day_per_city and len(selected_city_list) >= 1
+                    query_cities = selected_city_list if should_split_by_city else ([city] if city else [])
 
-                    all_dfs = []  # 用于收集所有日数据
-                    per_sheet_writer = None  # 用于按日分Sheet
+                    tasks = []
+                    for query_date in dates:
+                        for query_city in query_cities:
+                            tasks.append((query_date, query_city, query_city or '全部地市'))
 
-                    for day_idx, query_date in enumerate(dates):
-                        self.log(f"查询 {table_name} [{day_idx + 1}/{total_days}]: {query_date}", "INFO")
-                        self.update_progress(idx + day_idx / total_days, total_tables,
-                                           f"查询 {table_name}: {query_date}")
+                    total_tasks = len(tasks)
+                    self.log(f"按日查询模式: 共 {total_tasks} 个任务 ({total_days} 天 x {len(query_cities)} 地市)", "INFO")
+                    if should_split_by_city:
+                        self.log(f"按日+按地市导出模式: 共 {len(query_cities)} 个地市", "INFO")
 
-                        conditions = table_config.get('default_conditions', []).copy()
-                        conditions.append({'field': 'starttime', 'operator': '>=', 'value': query_date})
-                        conditions.append({'field': 'starttime', 'operator': '<=', 'value': query_date})
-                        if city:
-                            conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+                    all_dfs = []
+                    city_day_dfs = []
 
-                        payload = self.jxcx.build_payload_from_config(
-                            table_config['table_key'],
-                            table_config['fieldtype'],
-                            conditions,
-                            table_config['api_type'],
-                            dimension_override=dimension if dimension else None,
-                            fields_override=fields,
-                            table_name=table_config.get('table_name')
-                        )
-
-                        if payload:
+                    def _query_normal_task(task_data):
+                        q_date, q_city, q_city_label = task_data
+                        try:
+                            conditions = table_config.get('default_conditions', []).copy()
+                            conditions.append({'field': 'starttime', 'operator': '>=', 'value': q_date})
+                            conditions.append({'field': 'starttime', 'operator': '<=', 'value': q_date})
+                            if q_city:
+                                conditions.append({'field': 'city', 'operator': 'in', 'value': q_city})
+                            payload = self.jxcx.build_payload_from_config(
+                                table_config['table_key'],
+                                table_config['fieldtype'],
+                                conditions,
+                                table_config['api_type'],
+                                dimension_override=dimension if dimension else None,
+                                fields_override=fields,
+                                table_name=table_config.get('table_name')
+                            )
+                            if not payload:
+                                return None, None
                             df = self.jxcx.get_table(payload, report_name=table_name)
-                            if not df.empty:
-                                if multi_day_per_sheet:
-                                    # 按日分Sheet模式：每天一个Sheet
-                                    day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                                    day_filepath = export_to_excel(
-                                        df, day_filename,
-                                        sheet_name=query_date.replace('-', '')
-                                    )
-                                    if day_filepath:
-                                        self.log(f"  {query_date}: {len(df)} 条数据 -> Sheet", "SUCCESS")
-                                    all_dfs.append((query_date, df))
+                            if df.empty:
+                                return None, None
+                            return q_date, q_city_label, df
+                        except Exception as e:
+                            return None, {'date': q_date, 'city': q_city_label, 'error': str(e)}
+
+                    completed_tasks = 0
+                    with ThreadPoolExecutor(max_workers=min(8, total_tasks)) as executor:
+                        futures = {executor.submit(_query_normal_task, task): task for task in tasks}
+                        for future in as_completed(futures):
+                            result = future.result()
+                            completed_tasks += 1
+                            done_pct = completed_tasks / total_tasks
+                            self.root.after(0, lambda p=done_pct, t=completed_tasks: self.update_progress(
+                                idx + p / total_tables, total_tables,
+                                f"查询 {table_name} [{t}/{total_tasks}]"))
+                            if result[0] is not None:
+                                q_date, q_city_label, df = result
+                                if should_split_by_city:
+                                    city_day_dfs.append((f"{q_date.replace('-', '')}_{q_city_label}", df))
+                                    city_filename = f"{table_name}_{q_date}_{q_city_label}.xlsx"
+                                    city_filepath = export_to_excel(df, city_filename, table_name)
+                                    if city_filepath:
+                                        self.root.after(0, lambda fp, cnt, dt=q_date, cl=q_city_label:
+                                            self.log(f"  {dt} {cl}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
+                                            city_filepath, len(df))
+                                elif multi_day_per_sheet:
+                                    all_dfs.append((q_date.replace('-', ''), df))
                                 else:
-                                    # 按日分文件模式：每天一个文件
-                                    day_filename = f"{table_name}_{query_date}.xlsx"
+                                    all_dfs.append(df)
+                                    day_filename = f"{table_name}_{q_date}.xlsx"
                                     day_filepath = export_to_excel(df, day_filename, table_name)
                                     if day_filepath:
-                                        self.log(f"  {query_date}: {len(df)} 条数据 -> {os.path.basename(day_filepath)}", "SUCCESS")
-                                    all_dfs.append(df)
+                                        self.root.after(0, lambda fp, cnt, dt=q_date:
+                                            self.log(f"  {dt}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
+                                            day_filepath, len(df))
+                            elif result[1] is not None:
+                                err = result[1]
+                                self.root.after(0, lambda e=err:
+                                    self.log(f"  查询异常 [{e['date']} {e['city']}]: {e['error']}", "ERROR"))
 
-                    # 按日分Sheet模式：合并所有日到同一文件
+                    if should_split_by_city and city_day_dfs:
+                        self.log(f"按日+按地市导出完成: 共导出 {len(city_day_dfs)} 个文件", "SUCCESS")
+
                     if multi_day_per_sheet and all_dfs:
                         day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
                         self._export_multi_sheet(day_filename, all_dfs, table_name)
                         self.log(f"按日分Sheet导出完成: {day_filename}", "SUCCESS")
 
-                    # 按日分文件模式：合并所有日到同一文件
-                    if not multi_day_per_sheet and all_dfs:
+                    if not should_split_by_city and not multi_day_per_sheet and all_dfs:
                         combined_df = pd.concat(all_dfs, ignore_index=True)
                         day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
                         combined_filepath = export_to_excel(combined_df, day_filename, table_name)
                         if combined_filepath:
                             self.log(f"按日查询导出完成: {os.path.basename(combined_filepath)} ({len(combined_df)} 条)", "SUCCESS")
 
-                    if not all_dfs:
+                    if not all_dfs and not city_day_dfs:
                         self.log(f"查询结果为空: {table_name}", "WARNING")
 
                 else:
@@ -1477,6 +1813,119 @@ F1        - 显示此帮助
                 self.log(f"没有选中的字段可用，将导出全部字段", "WARNING")
         return df
 
+    def _query_tables_parallel(self, table_names, start_date, end_date, city, config_source):
+        """单地市多表并行查询。"""
+        def _run_single_table(table_index, table_name):
+            try:
+                query = JXCXQuery(self.session)
+                query.enter_jxcx()
+                table_config = TableConfig.get_table_config(table_name)
+                if not table_config:
+                    return {"table": table_name, "error": f"未找到表配置: {table_name}"}
+
+                payload_func = table_config.get('payload_func')
+                yaml_conditions = table_config.get('conditions')
+                has_yaml_conditions = yaml_conditions and isinstance(yaml_conditions, dict) and yaml_conditions.get('where')
+                dimension = table_config.get('dimension', {})
+                field_mode = getattr(self, 'field_mode_var', None)
+                use_hardcode_fields = field_mode.get() == 'hardcode' if field_mode else True
+                fields = table_config.get('fields', None) if use_hardcode_fields else None
+                is_gongcan = table_config.get('is_gongcan', False)
+                is_4g_voice = table_config.get('is_4g_voice', False)
+
+                if is_4g_voice:
+                    return {"table": table_name, "error": "4G语音小区暂不支持单地市多表并行，请单独提取"}
+
+                if payload_func:
+                    payload_template = payload_func()
+                    if payload_template and payload_template.get('__gongcan__'):
+                        conditions = table_config.get('default_conditions', []).copy()
+                        if city:
+                            conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+                        payload = query.build_payload_from_config(
+                            payload_template.get('table_key'),
+                            payload_template.get('fieldtype'),
+                            conditions,
+                            payload_template.get('api_type', 'table'),
+                            dimension_override={
+                                'geographicdimension': payload_template.get('geographicdimension', ''),
+                                'timedimension': payload_template.get('timedimension', ''),
+                                'enodebField': payload_template.get('enodebField', ''),
+                                'cgiField': payload_template.get('cgiField', ''),
+                                'timeField': payload_template.get('timeField', ''),
+                                'cellField': payload_template.get('cellField', ''),
+                                'cityField': payload_template.get('cityField', '')
+                            }
+                        )
+                    else:
+                        payload = payload_func(start_date, end_date, city)
+                elif has_yaml_conditions:
+                    payload = TableConfig.build_payload_from_yaml(table_name, start_date, end_date, city)
+                else:
+                    conditions = table_config.get('default_conditions', []).copy()
+                    conditions.append({'field': 'starttime', 'operator': '>=', 'value': start_date})
+                    conditions.append({'field': 'starttime', 'operator': '<=', 'value': end_date})
+                    if city:
+                        conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+                    payload = query.build_payload_from_config(
+                        table_config['table_key'],
+                        table_config['fieldtype'],
+                        conditions,
+                        table_config['api_type'],
+                        dimension_override=dimension if dimension else None,
+                        fields_override=fields,
+                        table_name=table_config.get('table_name')
+                    )
+
+                if not payload:
+                    return {"table": table_name, "warning": "未生成查询条件"}
+
+                df = query.get_table(payload, report_name=table_name)
+                if df.empty:
+                    return {"table": table_name, "warning": "查询结果为空"}
+
+                calc_columns = table_config.get('calc_columns', [])
+                if calc_columns:
+                    if '4G全程完好率' in table_name:
+                        df = self._add_4g_wanchenglv_calc_columns(df)
+                    elif '5G全程完好率' in table_name:
+                        df = self._add_5g_wanchenglv_calc_columns(df)
+
+                df = self._apply_custom_fields(df, table_name)
+                filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+                filepath = export_to_excel(df, filename, table_name)
+                return {
+                    "table": table_name,
+                    "filepath": filepath,
+                    "rows": len(df),
+                    "index": table_index,
+                }
+            except Exception as e:
+                return {"table": table_name, "error": str(e)}
+
+        completed = 0
+        with ThreadPoolExecutor(max_workers=min(6, len(table_names))) as executor:
+            futures = {
+                executor.submit(_run_single_table, table_index, table_name): (table_index, table_name)
+                for table_index, table_name in enumerate(table_names)
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                completed += 1
+                self.root.after(0, lambda done=completed, total=len(table_names): self.update_progress(
+                    done, total, f"多线程提取 [{done}/{total}]"
+                ))
+
+                if result.get("error"):
+                    self.root.after(0, lambda msg=result["error"], table=result["table"]:
+                        self.log(f"{table}: {msg}", "ERROR"))
+                elif result.get("warning"):
+                    self.root.after(0, lambda msg=result["warning"], table=result["table"]:
+                        self.log(f"{table}: {msg}", "WARNING"))
+                elif result.get("filepath"):
+                    self.root.after(0, lambda path=result["filepath"], rows=result["rows"], table=result["table"]:
+                        self.log(f"{table}: {rows} 条数据 -> {os.path.basename(path)}", "SUCCESS"))
+
     def _export_multi_sheet(self, filename, sheets_data, default_sheet):
         """导出多Sheet的Excel文件（快速模式）
 
@@ -1497,7 +1946,7 @@ F1        - 显示此帮助
             self.logger.error("多Sheet导出失败: %s", e)
 
     def _query_4g_voice_table(self, table_config, start_date, end_date, city,
-                               multi_day, multi_day_per_sheet):
+                               multi_day, multi_day_per_sheet, multi_day_per_city):
         """查询4G语音小区报表（VoLTE + EPSFB 联合查询）
 
         Args:
@@ -1507,6 +1956,7 @@ F1        - 显示此帮助
             city: 地市
             multi_day: 是否按日查询
             multi_day_per_sheet: 是否按日分Sheet
+            multi_day_per_city: 是否按日+按地市导出
         """
         from datetime import datetime, timedelta
         import numpy as np
@@ -1518,19 +1968,17 @@ F1        - 显示此帮助
             self.log(f"4G语音小区字段配置不完整，无法查询", "ERROR")
             return
 
-        # VoLTE和EPSFB的维度配置
         volte_dimension = table_config.get('dimension', {})
         epsfb_dimension = {
             'geographicdimension': '小区',
             'timedimension': '天',
-            'enodebField': '---',  # EPSFB表没有enodeb字段
+            'enodebField': '---',
             'cgiField': 'cgi',
             'timeField': 'starttime',
             'cellField': 'cell',
             'cityField': 'city',
         }
 
-        # 按日查询模式
         if multi_day:
             current_date = datetime.strptime(start_date, '%Y-%m-%d')
             end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
@@ -1540,59 +1988,87 @@ F1        - 显示此帮助
                 current_date += timedelta(days=1)
 
             total_days = len(dates)
-            self.log(f"4G语音小区 - 按日查询模式: 共 {total_days} 天", "INFO")
+            selected_city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
+            should_split_by_city = multi_day_per_city and len(selected_city_list) >= 1
+            query_cities = selected_city_list if should_split_by_city else ([city] if city else [])
+
+            tasks = []
+            for query_date in dates:
+                for query_city in query_cities:
+                    tasks.append((query_date, query_city, query_city or '全部地市'))
+
+            total_tasks = len(tasks)
+            self.log(f"4G语音小区 - 按日查询模式: 共 {total_tasks} 个任务 ({total_days} 天 x {len(query_cities)} 地市)", "INFO")
+            if should_split_by_city:
+                self.log(f"4G语音小区 - 按日+按地市导出模式: 共 {len(query_cities)} 个地市", "INFO")
 
             all_merged_dfs = []
+            city_day_dfs = []
 
-            for day_idx, query_date in enumerate(dates):
-                self.log(f"4G语音小区 [{day_idx + 1}/{total_days}]: {query_date}", "INFO")
-                self.update_progress(day_idx, total_days, f"查询4G语音小区: {query_date}")
+            def _query_4g_voice_task(task_data):
+                q_date, q_city, q_city_label = task_data
+                try:
+                    conditions = [
+                        {'field': 'starttime', 'operator': '>=', 'value': q_date},
+                        {'field': 'starttime', 'operator': '<=', 'value': q_date},
+                    ]
+                    if q_city:
+                        conditions.append({'field': 'city', 'operator': 'in', 'value': q_city})
+                    payloads = self.jxcx.build_4g_voice_payload(
+                        volte_fields, epsfb_fields, conditions,
+                        volte_dimension, epsfb_dimension
+                    )
+                    volte_payload = payloads['volte']
+                    epsfb_payload = payloads['epsfb']
+                    voice_data = self.jxcx.get_4g_voice_table(volte_payload, epsfb_payload)
+                    if voice_data.empty:
+                        return None, None
+                    merged_df = self._add_4g_voice_calc_columns(voice_data)
+                    return q_date, q_city_label, merged_df
+                except Exception as e:
+                    return None, {'date': q_date, 'city': q_city_label, 'error': str(e)}
 
-                # 构建VoLTE和EPSFB的查询条件
-                conditions = [
-                    {'field': 'starttime', 'operator': '>=', 'value': query_date},
-                    {'field': 'starttime', 'operator': '<=', 'value': query_date},
-                ]
-                if city:
-                    conditions.append({'field': 'city', 'operator': 'in', 'value': city})
+            completed_tasks = 0
+            with ThreadPoolExecutor(max_workers=min(8, total_tasks)) as executor:
+                futures = {executor.submit(_query_4g_voice_task, task): task for task in tasks}
+                for future in as_completed(futures):
+                    result = future.result()
+                    completed_tasks += 1
+                    self.root.after(0, lambda t=completed_tasks, tot=total_tasks:
+                        self.update_progress(t / tot, tot, f"查询4G语音小区 [{t}/{tot}]"))
+                    if result[0] is not None:
+                        q_date, q_city_label, merged_df = result
+                        if should_split_by_city:
+                            city_day_dfs.append((f"{q_date.replace('-', '')}_{q_city_label}", merged_df))
+                            filename = f"4G语音小区_{q_date}_{q_city_label}.xlsx"
+                            filepath = export_to_excel(merged_df, filename, "4G语音小区")
+                            if filepath:
+                                self.root.after(0, lambda fp, cnt, dt=q_date, cl=q_city_label:
+                                    self.log(f"  {dt} {cl}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
+                                    filepath, len(merged_df))
+                        elif multi_day_per_sheet:
+                            all_merged_dfs.append((q_date.replace('-', ''), merged_df))
+                        else:
+                            filename = f"4G语音小区_{q_date}.xlsx"
+                            filepath = export_to_excel(merged_df, filename, "4G语音小区")
+                            if filepath:
+                                self.root.after(0, lambda fp, cnt, dt=q_date:
+                                    self.log(f"  {dt}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
+                                    filepath, len(merged_df))
+                    elif result[1] is not None:
+                        err = result[1]
+                        self.root.after(0, lambda e=err:
+                            self.log(f"  查询异常 [{e['date']} {e['city']}]: {e['error']}", "ERROR"))
 
-                # 构建payload
-                payloads = self.jxcx.build_4g_voice_payload(
-                    volte_fields, epsfb_fields, conditions,
-                    volte_dimension, epsfb_dimension
-                )
-                volte_payload = payloads['volte']
-                epsfb_payload = payloads['epsfb']
+            if should_split_by_city and city_day_dfs:
+                self.log(f"4G语音小区按日+按地市导出完成: 共导出 {len(city_day_dfs)} 个文件", "SUCCESS")
 
-                # 获取数据
-                voice_data = self.jxcx.get_4g_voice_table(volte_payload, epsfb_payload)
-                merged_df = voice_data
-
-                if not merged_df.empty:
-                    # 添加计算列
-                    try:
-                        merged_df = self._add_4g_voice_calc_columns(merged_df)
-                    except Exception as e:
-                        self.log(f"  添加计算列异常: {e}", "WARNING")
-
-                    if multi_day_per_sheet:
-                        # 按日分Sheet模式：每天一个Sheet
-                        all_merged_dfs.append((query_date.replace('-', ''), merged_df))
-                    else:
-                        # 按日分文件模式：每天一个文件
-                        filename = f"4G语音小区_{query_date}.xlsx"
-                        filepath = export_to_excel(merged_df, filename, "4G语音小区")
-                        if filepath:
-                            self.log(f"  {query_date}: {len(merged_df)} 条数据 -> {os.path.basename(filepath)}", "SUCCESS")
-
-            # 按日分Sheet模式：合并所有日到同一文件
             if multi_day_per_sheet and all_merged_dfs:
                 filename = f"4G语音小区_{start_date}_{end_date}.xlsx"
                 self._export_multi_sheet(filename, all_merged_dfs, "4G语音小区")
                 self.log(f"按日分Sheet导出完成: {filename}", "SUCCESS")
 
         else:
-            # 普通模式：按日期范围查询
             conditions = [
                 {'field': 'starttime', 'operator': '>=', 'value': start_date},
                 {'field': 'starttime', 'operator': '<=', 'value': end_date},
@@ -1602,7 +2078,6 @@ F1        - 显示此帮助
 
             self.log(f"4G语音小区: 查询 {start_date} 至 {end_date}", "INFO")
 
-            # 构建payload
             payloads = self.jxcx.build_4g_voice_payload(
                 volte_fields, epsfb_fields, conditions,
                 volte_dimension, epsfb_dimension
@@ -1610,11 +2085,9 @@ F1        - 显示此帮助
             volte_payload = payloads['volte']
             epsfb_payload = payloads['epsfb']
 
-            # 获取数据
             merged_df = self.jxcx.get_4g_voice_table(volte_payload, epsfb_payload)
 
             if not merged_df.empty:
-                # 添加计算列
                 try:
                     merged_df = self._add_4g_voice_calc_columns(merged_df)
                 except Exception as e:
@@ -2199,6 +2672,11 @@ F1        - 显示此帮助
         """加载配置"""
         self.log("NQI工具已就绪", "INFO")
         self.log(f"支持的数据表: {', '.join(TableConfig.get_table_names())}", "INFO")
+        # 显示配置来源统计
+        yaml_count = len(TableConfig._get_yaml_loader().get_all_names())
+        old_count = len(TableConfig.TABLE_CONFIGS)
+        self.log(f"配置来源统计: YAML配置 {yaml_count} 个, 旧代码 {old_count} 个", "INFO")
+        self.log("提示: 可通过'配置来源'切换按钮验证YAML改造是否成功", "INFO")
 
     def run(self):
         """运行应用"""

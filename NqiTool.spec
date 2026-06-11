@@ -15,6 +15,8 @@ a = Analysis(
     binaries=[],
     datas=[
         ('config.yaml', '.'),
+        ('table_configs', 'table_configs'),
+        ('custom_configs', 'custom_configs'),
     ],
     hiddenimports=[
         # 项目内部模块 - utils

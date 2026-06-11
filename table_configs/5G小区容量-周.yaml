@@ -1,0 +1,99 @@
+# 5G小区容量-周报表
+
+name: 5G小区容量-周
+table_key: 5G小区容量报表 - 周粒度
+table_name: appdbv3.a_adhoc_capacity_nr_nrcell_w
+fieldtype: 5G小区容量报表 - 周粒度
+api_type: table
+
+dimension:
+  geographicdimension: 小区
+  timedimension: 周
+  enodebField: station_name
+  cgiField: ncgi
+  timeField: starttime
+  cellField: nrcell_name
+  cityField: city
+
+# 字段列表
+fields:
+  - {feild: starttime, feildName: 记录开始时间, datatype: timestamp, columntype: 2}
+  - {feild: endtime, feildName: 记录结束时间, datatype: timestamp, columntype: 2}
+  - {feild: city, feildName: 地市, datatype: character varying, columntype: 2}
+  - {feild: nrcell_name, feildName: 小区名称, datatype: character varying, columntype: 2}
+  - {feild: ncgi, feildName: NCGI, datatype: character varying, columntype: 2}
+  - {feild: state, feildName: 网元状态, datatype: character varying, columntype: 1}
+  - {feild: vendor, feildName: 设备厂家, datatype: character varying, columntype: 1}
+  - {feild: freq, feildName: 使用频段, datatype: character varying, columntype: 1}
+  - {feild: frequency_band_detail, feildName: 详细使用频段, datatype: character varying, columntype: 1}
+  - {feild: cover_type, feildName: 覆盖类型, datatype: character varying, columntype: 1}
+  - {feild: cover_scene, feildName: 一级场景, datatype: character varying, columntype: 1}
+  - {feild: is_remote, feildName: 是否拉远, datatype: character varying, columntype: 1}
+  - {feild: station_name, feildName: 站点名称, datatype: character varying, columntype: 1}
+  - {feild: longitude, feildName: 经度, datatype: decimal, columntype: 1}
+  - {feild: latitude, feildName: 纬度, datatype: decimal, columntype: 1}
+  - {feild: sectors_name, feildName: 共站同覆盖小区名称, datatype: character varying, columntype: 1}
+  - {feild: bh_rru_pdcchcceutil, feildName: 忙时PDCCH信道CCE占用个数, datatype: bigint, columntype: 1}
+  - {feild: grid, feildName: 网格, datatype: character varying, columntype: 1}
+  - {feild: grid_road, feildName: 网格道路, datatype: character varying, columntype: 1}
+  - {feild: bh_rru_pdcchcceavail, feildName: 忙时PDCCH信道CCE可用个数, datatype: bigint, columntype: 1}
+  - {feild: bh_pdcchcceoccupancyrate, feildName: PDCCH信道CCE占用率(%), datatype: decimal, columntype: 1}
+  - {feild: bh_rru_puschprbassn, feildName: 忙时上行PUSCH PRB占用数, datatype: decimal, columntype: 1}
+  - {feild: bh_rru_puschprbtot, feildName: 忙时上行PUSCH PRB总可用数, datatype: decimal, columntype: 1}
+  - {feild: bh_prbassnrateul, feildName: 忙时上行PRB平均利用率(%), datatype: decimal, columntype: 1}
+  - {feild: bh_rru_pdschprbassn, feildName: 忙时下行PDSCH PRB占用数, datatype: decimal, columntype: 1}
+  - {feild: bh_rru_pdschprbtot, feildName: 忙时下行PDSCH PRB总可用数, datatype: decimal, columntype: 1}
+  - {feild: bh_prbassnratedl, feildName: 忙时下行PRB平均利用率(%), datatype: decimal, columntype: 1}
+  - {feild: bh_rlc_upoctul, feildName: 忙时RLC层上行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: bh_rlc_upoctdl, feildName: 忙时RLC层下行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: bh_mac_cpoctul, feildName: 忙时MAC层上行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: bh_mac_cpoctdl, feildName: 忙时MAC层下行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: bh_pdcp_upoctul, feildName: 忙时PDCP层上行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: bh_pdcp_upoctdl, feildName: 忙时PDCP层下行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: rlc_upoctul, feildName: 日RLC层上行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: rlc_upoctdl, feildName: 日RLC层下行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: rlc_upoctudl, feildName: 日RLC层上下行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: mac_cpoctudl, feildName: MAC层上下行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: pdcp_upoctudl, feildName: PDCP层上下行字节数(G), datatype: decimal, columntype: 1}
+  - {feild: is_highload, feildName: 是否高负荷, datatype: boolean, columntype: 1}
+  - {feild: bh_rrc_connmean, feildName: 忙时RRC连接平均数, datatype: decimal, columntype: 2}
+  - {feild: bh_rrc_connmax, feildName: 忙时RRC连接最大数, datatype: decimal, columntype: 2}
+  - {feild: bh_flow_nbrattestab, feildName: Flow建立请求次数, datatype: character varying, columntype: 2}
+  - {feild: bh_flow_nbrsuccestab, feildName: Flow建立成功次数, datatype: character varying, columntype: 2}
+  - {feild: bh_kpi_flowsuccconnrate, feildName: 忙时流量建立成功率, datatype: character varying, columntype: 2}
+  - {feild: second_scene_detail, feildName: 二级场景细化, datatype: character varying, columntype: 1}
+  - {feild: bh_puschprbtot_reuse, feildName: 忙时上行PRB可用空分层数, datatype: character varying, columntype: 1}
+  - {feild: bh_puschprbassn_reuse, feildName: 忙时上行PRB占用空分层数, datatype: character varying, columntype: 1}
+  - {feild: bh_avgdtchmimolayerul, feildName: 忙时上行空分复用层数, datatype: character varying, columntype: 1}
+  - {feild: bh_pdschprbtot_reuse, feildName: 忙时下行PRB可用空分层数, datatype: character varying, columntype: 1}
+  - {feild: bh_pdschprbassn_reuse, feildName: 忙时下行PRB占用空分层数, datatype: character varying, columntype: 1}
+  - {feild: bh_avgdtchmimolayerdl, feildName: 忙时下行空分复用层数, datatype: character varying, columntype: 1}
+  - {feild: maxdtchmimolayerul, feildName: 最大上行MIMO层数, datatype: character varying, columntype: 1}
+  - {feild: maxdtchmimolayerdl, feildName: 最大下行MIMO层数, datatype: character varying, columntype: 1}
+  - {feild: bh_dtchmimoprbassnrateul, feildName: 忙时上行空分PRB占用率, datatype: character varying, columntype: 1}
+  - {feild: bh_dtchmimoprbassnratedl, feildName: 忙时下行空分PRB占用率, datatype: character varying, columntype: 1}
+  - {feild: bh_cellprbrate, feildName: 忙时小区PRB利用率(%), datatype: character varying, columntype: 1}
+  - {feild: bh_flow_nbrhoinc, feildName: 忙时切换入成功次数, datatype: character varying, columntype: 1}
+  - {feild: bh_upoctudl_perflow, feildName: 忙时每Flow上下行流量, datatype: character varying, columntype: 1}
+  - {feild: band_width, feildName: 带宽, datatype: character varying, columntype: 1}
+  - {feild: ssbfrequenc, feildName: 中心载频信道号, datatype: character varying, columntype: 1}
+  - {feild: txrxmode, feildName: 收发模式, datatype: character varying, columntype: 1}
+  - {feild: area_type, feildName: 区域类型, datatype: character varying, columntype: 1}
+  - {feild: micro_grid, feildName: 微网格, datatype: character varying, columntype: 1}
+  - {feild: cover_scene1, feildName: 场景1, datatype: character varying, columntype: 1}
+  - {feild: cover_scene2, feildName: 场景2, datatype: character varying, columntype: 1}
+  - {feild: cover_scene3, feildName: 场景3, datatype: character varying, columntype: 1}
+  - {feild: cover_scene4, feildName: 场景4, datatype: character varying, columntype: 1}
+
+# 查询条件
+conditions:
+  where:
+    - {feild: starttime, datatype: timestamp, symbol: '>=', val: '{start_date} 00:00:00', whereCon: and, query: true}
+    - {feild: starttime, datatype: timestamp, symbol: '<', val: '{end_date} 23:59:59', whereCon: and, query: true}
+    - {feild: city, datatype: character, symbol: in, val: '{city}', whereCon: and, query: true}
+  fixed_params:
+    draw: 1
+    start: 0
+    length: 200
+    total: 0
+    indexcount: 0

@@ -1,0 +1,82 @@
+# EPSFB小区监控预警报表
+
+name: EPSFB小区监控预警
+table_key: EPSFB小区监控预警数据表-天
+table_name: csem.f_nk_epsfb_keykpi_cell_d
+fieldtype: EPSFB小区监控预警数据表-天
+api_type: table
+
+dimension:
+  geographicdimension: 小区
+  timedimension: 天
+  enodebField: gnodeb_id
+  cgiField: cgi
+  timeField: starttime
+  cellField: cell
+  cityField: city
+
+# 字段列表
+fields:
+  - {feild: starttime, feildName: 时间, datatype: timestamp, columntype: 1}
+  - {feild: city, feildName: 地市, datatype: character varying, columntype: 1}
+  - {feild: cgi, feildName: 小区, datatype: character varying, columntype: 1}
+  - {feild: grid, feildName: 责任网格, datatype: character varying, columntype: 1}
+  - {feild: area, feildName: 区县, datatype: character varying, columntype: 1}
+  - {feild: nrcell_name, feildName: 小区名称, datatype: character varying, columntype: 1}
+  # EPSFB特有字段
+  - {feild: sacs_start_moc_net_succ_rate, feildName: EPSFB始呼网络接通率, datatype: numeric, columntype: 1}
+  - {feild: sacs_start_mtc_net_succ_rate, feildName: EPSFB终呼网络接通率, datatype: numeric, columntype: 1}
+  - {feild: sacs_start_call_net_succ_rate, feildName: EPSFB呼叫网络接通率（SA控制起始）, datatype: numeric, columntype: 1}
+  - {feild: sacs_start_call_drop_rate, feildName: EPSFB掉话率（SA控制起始）, datatype: numeric, columntype: 1}
+  - {feild: sacs_start_fb_succ_rate, feildName: EPSFB切换成功率（SA控制起始）, datatype: numeric, columntype: 1}
+  # EPSFB统计指标
+  - {feild: epsfb_sbc_net_suss, feildName: EPSFB网络接通次数, datatype: numeric, columntype: 1}
+  - {feild: epsfb_sbc_net_sums, feildName: EPSFB网络试呼次数, datatype: numeric, columntype: 1}
+  - {feild: epsfb_sbc_drops, feildName: EPSFB掉话次数, datatype: numeric, columntype: 1}
+  - {feild: epsfb_sbc_ans, feildName: EPSFB应答复次数, datatype: numeric, columntype: 1}
+  # EPSFB语音指标
+  - {feild: epsfb_local_radio_single_voice_call, feildName: EPSFB语音本端无线单通通话次数, datatype: numeric, columntype: 1}
+  - {feild: epsfb_local_radio_dx_call, feildName: EPSFB语音本端无线断续通话次数, datatype: numeric, columntype: 1}
+  - {feild: epsfb_ans_voice_call, feildName: EPSFB语音通话总次数, datatype: numeric, columntype: 1}
+  - {feild: epsfb_local_radio_dtdx_rate, feildName: EPSFB单通断续次数占比, datatype: numeric, columntype: 1}
+  # EPSFB上行时长
+  - {feild: epsfb_ul_tunzi_len, feildName: EPSFB语音上行质差时长(s), datatype: numeric, columntype: 1}
+  - {feild: epsfb_ul_dantong_len, feildName: EPSFB语音上行单通时长(s), datatype: numeric, columntype: 1}
+  - {feild: epsfb_ul_duanxu_len, feildName: EPSFB语音上行断续时长(s), datatype: numeric, columntype: 1}
+  - {feild: epsfb_ul_voice_sum_len, feildName: EPSFB语音上行总时长(s), datatype: numeric, columntype: 1}
+  # EPSFB下行时长
+  - {feild: epsfb_dl_tunzi_len, feildName: EPSFB语音下行质差时长(s), datatype: numeric, columntype: 1}
+  - {feild: epsfb_dl_dantong_len, feildName: EPSFB语音下行单通时长(s), datatype: numeric, columntype: 1}
+  - {feild: epsfb_dl_duanxu_len, feildName: EPSFB语音下行断续时长(s), datatype: numeric, columntype: 1}
+  - {feild: epsfb_dl_voice_sum_len, feildName: EPSFB语音下行总时长(s), datatype: numeric, columntype: 1}
+  # MOS指标
+  - {feild: mconv_rtp_ul_mos_avg, feildName: RTP上行平均MOS, datatype: numeric, columntype: 1}
+  - {feild: mconv_rtp_dl_mos_avg, feildName: RTP下行平均MOS, datatype: numeric, columntype: 1}
+  - {feild: mconv_rtp_ul_pkts_lost_rate, feildName: RTP上行丢包率, datatype: numeric, columntype: 1}
+  - {feild: mconv_rtp_dl_pkts_lost_rate, feildName: RTP下行丢包率, datatype: numeric, columntype: 1}
+  # 扩展字段
+  - {feild: micro_grid, feildName: 微网格标识, datatype: character varying, columntype: 1}
+  - {feild: cover_scene1, feildName: 覆盖场景1, datatype: character varying, columntype: 1}
+  - {feild: cover_scene2, feildName: 覆盖场景2, datatype: character varying, columntype: 1}
+  - {feild: cover_scene3, feildName: 覆盖场景3, datatype: character varying, columntype: 1}
+  - {feild: cover_scene4, feildName: 覆盖场景4, datatype: character varying, columntype: 1}
+  - {feild: grid_road, feildName: 网格道路, datatype: character varying, columntype: 1}
+  - {feild: marketduty, feildName: 市场职责, datatype: character varying, columntype: 1}
+  - {feild: vendor, feildName: 厂商, datatype: character varying, columntype: 1}
+  - {feild: state, feildName: 网元状态, datatype: character varying, columntype: 1}
+  - {feild: coverage_type, feildName: 覆盖类型, datatype: character varying, columntype: 1}
+  - {feild: network_type, feildName: 网络制式, datatype: character varying, columntype: 1}
+  - {feild: freq, feildName: 频段_无线, datatype: character varying, columntype: 1}
+
+# 查询条件
+conditions:
+  where:
+    - {feild: starttime, datatype: timestamp, symbol: '>=', val: '{start_date} 00:00:00', whereCon: and, query: true}
+    - {feild: starttime, datatype: timestamp, symbol: '<', val: '{end_date} 23:59:59', whereCon: and, query: true}
+    - {feild: city, datatype: character, symbol: in, val: '{city}', whereCon: and, query: true}
+  fixed_params:
+    draw: 1
+    start: 0
+    length: 200
+    total: 0
+    indexcount: 0

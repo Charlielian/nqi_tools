@@ -1,0 +1,76 @@
+# 5G全程完好率报表
+# 支持计算列：5G全程完好率、SA无线接通率、SA切换成功率、SA无线掉线率、5G是否差小区
+
+name: 5G全程完好率报表
+table_key: appdbv3.a_common_pm_sacu
+table_name: appdbv3.a_common_pm_sacu
+fieldtype: 公共_5G小区性能KPI报表_小区
+api_type: table
+calc_columns:
+  - 5G全程完好率(%)
+  - SA无线接通率(%)
+  - SA切换成功率(%)
+  - SA无线掉线率(%)
+  - 5G是否差小区
+
+dimension:
+  geographicdimension: 小区
+  timedimension: 天
+  enodebField: gnodeb_id
+  cgiField: ncgi
+  timeField: starttime
+  cellField: nrcell
+  cityField: city
+
+# 字段列表
+fields:
+  - {feild: starttime, feildName: 数据时间, datatype: character varying, columntype: 1}
+  - {feild: ncgi, feildName: NCGI, datatype: character varying, columntype: 1}
+  - {feild: nrcell_name, feildName: 小区名称, datatype: character varying, columntype: 1}
+  - {feild: branch, feildName: 人力区县分公司, datatype: character varying, columntype: 1}
+  - {feild: grid, feildName: 责任网格, datatype: character varying, columntype: 1}
+  - {feild: grid_road, feildName: 路测网格, datatype: character varying, columntype: 1}
+  - {feild: city, feildName: 所属地市, datatype: character varying, columntype: 1}
+  - {feild: area, feildName: 所属区县, datatype: character varying, columntype: 1}
+  - {feild: vendor, feildName: 设备厂家, datatype: character varying, columntype: 1}
+  - {feild: network_type, feildName: 网络制式, datatype: character varying, columntype: 1}
+  - {feild: cover_type, feildName: 覆盖类型, datatype: character varying, columntype: 1}
+  - {feild: state, feildName: 网元状态, datatype: character varying, columntype: 1}
+  # RRC连接指标
+  - {feild: rrc_attconnestab, feildName: RRC连接建立请求次数, datatype: bigint, columntype: 1}
+  - {feild: rrc_succconnestab, feildName: RRC连接建立成功次数, datatype: bigint, columntype: 1}
+  # Flow建立指标
+  - {feild: flow_nbrattestab, feildName: Flow建立请求数, datatype: bigint, columntype: 1}
+  - {feild: flow_nbrsuccestab, feildName: Flow建立成功数, datatype: bigint, columntype: 1}
+  # NG接口信令连接指标
+  - {feild: ngsig_connestabatt, feildName: NG接口UE相关逻辑信令连接建立请求次数, datatype: bigint, columntype: 1}
+  - {feild: ngsig_connestabsucc, feildName: NG接口UE相关逻辑信令连接建立成功次数, datatype: bigint, columntype: 1}
+  # 上下文指标
+  - {feild: context_attrelgnb, feildName: gNB请求释放上下文数, datatype: bigint, columntype: 1}
+  - {feild: context_attrelgnb_normal, feildName: 正常的gNB请求释放上下文数, datatype: bigint, columntype: 1}
+  - {feild: context_succinitalsetup, feildName: 初始上下文建立成功次数, datatype: bigint, columntype: 1}
+  - {feild: context_nbrleft, feildName: 遗留上下文个数, datatype: bigint, columntype: 1}
+  # 切换指标
+  - {feild: ho_succexecinc, feildName: 切换入成功次数, datatype: bigint, columntype: 1}
+  - {feild: rrc_succconnreestab_nonsrccell, feildName: RRC连接重建成功次数(非源侧小区), datatype: bigint, columntype: 1}
+  - {feild: ho_succoutintercung, feildName: gNB间NG切换出成功次数, datatype: bigint, columntype: 1}
+  - {feild: ho_succoutintercuxn, feildName: gNB间Xn切换出成功次数, datatype: bigint, columntype: 1}
+  - {feild: ho_attoutintercung, feildName: gNB间NG切换出准备请求次数, datatype: bigint, columntype: 1}
+  - {feild: ho_attoutintercuxn, feildName: gNB间Xn切换出准备请求次数, datatype: bigint, columntype: 1}
+  - {feild: ho_succoutintracuinterdu, feildName: CU内DU间切换出执行成功次数, datatype: bigint, columntype: 1}
+  - {feild: ho_succoutintradu, feildName: CU内DU内切换出成功次数, datatype: bigint, columntype: 1}
+  - {feild: ho_attoutintracuinterdu, feildName: CU内DU间切换出执行请求次数, datatype: bigint, columntype: 1}
+  - {feild: ho_attoutcuintradu, feildName: CU内DU内切换出执行请求次数, datatype: bigint, columntype: 1}
+
+# 查询条件
+conditions:
+  where:
+    - {feild: starttime, datatype: timestamp, symbol: '>=', val: '{start_date} 00:00:00', whereCon: and, query: true}
+    - {feild: starttime, datatype: timestamp, symbol: '<', val: '{end_date} 23:59:59', whereCon: and, query: true}
+    - {feild: city, datatype: character, symbol: in, val: '{city}', whereCon: and, query: true}
+  fixed_params:
+    draw: 1
+    start: 0
+    length: 200
+    total: 0
+    indexcount: 0
