@@ -54,21 +54,22 @@ jobs:
           }
 
           # 创建默认 config.yaml
-          @"
-# NQI工具配置文件
-auth:
-  username: 'XXXXX'
-  password: 'XXXX'
-
-paths:
-  output_dir: './data_output'
-  cookie_dir: './cookies'
-  captcha_dir: './captcha_images'
-  log_dir: './logs'
-
-server:
-  base_url: 'https://nqi.gmcc.net:20443'
-"@ | Out-File -FilePath "$ReleaseDir/config.yaml" -Encoding UTF8
+          $ConfigLines = @(
+            "# NQI工具配置文件",
+            "auth:",
+            "  username: 'XXXXX'",
+            "  password: 'XXXX'",
+            "",
+            "paths:",
+            "  output_dir: './data_output'",
+            "  cookie_dir: './cookies'",
+            "  captcha_dir: './captcha_images'",
+            "  log_dir: './logs'",
+            "",
+            "server:",
+            "  base_url: 'https://nqi.gmcc.net:20443'"
+          )
+          $ConfigLines | Set-Content -Path "$ReleaseDir/config.yaml" -Encoding UTF8
 
           # 创建运行时目录
           New-Item -Path "$ReleaseDir/data_output" -ItemType Directory -Force
@@ -77,13 +78,14 @@ server:
           New-Item -Path "$ReleaseDir/logs" -ItemType Directory -Force
 
           # 创建 README
-          @"
-# NqiTool 使用说明
-
-1. 首次运行前，修改 config.yaml 填写正确的用户名和密码
-2. 双击 NqiTool.exe 启动程序
-3. 导出的数据会保存在 data_output 目录中
-"@ | Out-File -FilePath "$ReleaseDir/README.txt" -Encoding UTF8
+          $ReadmeLines = @(
+            "# NqiTool 使用说明",
+            "",
+            "1. 首次运行前，修改 config.yaml 填写正确的用户名和密码",
+            "2. 双击 NqiTool.exe 启动程序",
+            "3. 导出的数据会保存在 data_output 目录中"
+          )
+          $ReadmeLines | Set-Content -Path "$ReleaseDir/README.txt" -Encoding UTF8
 
           # 打包为 ZIP
           Compress-Archive -Path "release/NqiTool" -DestinationPath "release/NqiTool.zip" -Force
