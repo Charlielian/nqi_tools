@@ -685,9 +685,6 @@ class FlowTableBuilder:
         # 字段重排和输出
         result = self._reorder_5g_fields(result)
         
-        # 添加网络制式列
-        result.insert(0, '网络制式', '5G')
-        
         self._log(f"5G容量表构建完成: {len(result)} 行")
         return result
     
@@ -996,9 +993,6 @@ class FlowTableBuilder:
         # 字段重排和输出
         result = self._reorder_4g_fields(result)
         
-        # 添加网络制式列
-        result.insert(0, '网络制式', '4G')
-        
         self._log(f"4G容量表构建完成: {len(result)} 行")
         return result
     
@@ -1035,37 +1029,13 @@ class FlowTableBuilder:
         return df[ordered]
     
     def merge_45g_table(self, table_5g, table_4g):
-        """合并45G总表 - 只保留文档定义的标准字段"""
+        """合并45G总表"""
         self._log("-" * 60)
         self._log("开始合并45G总表")
         
         if table_5g is None and table_4g is None:
             self._log("5G和4G数据都为空，无法合并", 'warning')
             return None
-        
-        # 文档定义的标准字段
-        standard_fields = [
-            # 基础信息
-            '记录开始时间', '记录结束时间',
-            '地市', '网元状态', '小区名称', '扇区', 'band', '场景V容量表', 'TYPE', '物理站',
-            # 流量分析
-            '流量是否正常', '负荷情况', '流量排名升序', '长尾小区', '流量系数', '日均流量',
-            # 核心指标
-            '自忙时利用率',
-            'VoNR语音话务量', 'VOLTE语音话务量',
-            '自忙时上行流量', '自忙时下行流量', '自忙时总流量',
-            # 工作日/周末
-            '工作日自忙时利用率', '工作日日均流量', '工作日自忙时RRC连接最大数',
-            '周末自忙时利用率', '周末日均流量', '周末自忙时RRC连接最大数',
-            # PRB指标
-            '自忙时上行PRB平均利用率', '自忙时下行PRB平均利用率', '自忙时PDCCH信道CCE占用率',
-            # RRC指标
-            '自忙时RRC连接最大数', '自忙时有效RRC连接最大数', '自忙时有效RRC连接平均数',
-            # MR覆盖
-            'MRO移动总采样点', 'MRO移动覆盖率', '平均TA米',
-            # 预警标识
-            '是否全省高负荷预警小区（集团口径）', '是否高负荷待扩容小区', '是否全省高负荷预警小区（省内口径）',
-        ]
         
         dfs = []
         
@@ -1074,7 +1044,7 @@ class FlowTableBuilder:
             df_5g = table_5g.copy()
             df_5g.insert(0, '网络制式', '5G')
             
-            # NCGI -> CGI/NCGI
+            # NCGI -> CGI/NCGI (处理大小写)
             ncgi_col = None
             for c in ['NCGI', 'ncgi']:
                 if c in df_5g.columns:
@@ -1084,11 +1054,6 @@ class FlowTableBuilder:
                 df_5g['CGI/NCGI'] = df_5g[ncgi_col]
                 df_5g = df_5g.drop(columns=[ncgi_col])
             
-            # 只保留标准字段
-            select_cols = ['网络制式', 'CGI/NCGI'] + [c for c in standard_fields if c in df_5g.columns]
-            select_cols = [c for c in select_cols if c in df_5g.columns]
-            df_5g = df_5g[select_cols]
-            
             dfs.append(df_5g)
         
         # 处理4G数据
@@ -1096,7 +1061,7 @@ class FlowTableBuilder:
             df_4g = table_4g.copy()
             df_4g.insert(0, '网络制式', '4G')
             
-            # CGI -> CGI/NCGI
+            # CGI -> CGI/NCGI (处理大小写)
             cgi_col = None
             for c in ['CGI', 'cgi']:
                 if c in df_4g.columns:
@@ -1106,11 +1071,6 @@ class FlowTableBuilder:
                 df_4g['CGI/NCGI'] = df_4g[cgi_col]
                 df_4g = df_4g.drop(columns=[cgi_col])
             
-            # 只保留标准字段
-            select_cols = ['网络制式', 'CGI/NCGI'] + [c for c in standard_fields if c in df_4g.columns]
-            select_cols = [c for c in select_cols if c in df_4g.columns]
-            df_4g = df_4g[select_cols]
-            
             dfs.append(df_4g)
         
         if not dfs:
@@ -1119,19 +1079,7 @@ class FlowTableBuilder:
         # 合并
         merged = pd.concat(dfs, ignore_index=True)
         
-        # 按标准顺序排列列
-        ordered_cols = ['网络制式', 'CGI/NCGI']
-        for col in standard_fields:
-            if col in merged.columns and col not in ordered_cols:
-                ordered_cols.append(col)
-        # 添加其他列
-        for col in merged.columns:
-            if col not in ordered_cols:
-                ordered_cols.append(col)
-        
-        merged = merged[[c for c in ordered_cols if c in merged.columns]]
-        
-        self._log(f"45G总表合并完成: {len(merged)} 行, {len(merged.columns)} 列")
+        self._log(f"45G总表合并完成: {len(merged)} 行")
         return merged
     
     def save_results(self, table_5g, table_4g, table_45g):

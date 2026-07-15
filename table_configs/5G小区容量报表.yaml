@@ -35,57 +35,16 @@ fields:
   - {feild: station_name, feildName: 所属基站, datatype: character varying, columntype: 1}
   - {feild: longitude, feildName: 经度, datatype: decimal, columntype: 1}
   - {feild: latitude, feildName: 纬度, datatype: decimal, columntype: 1}
-  - {feild: bh_rru_pdcchcceutil, feildName: 忙时PDCCH信道CCE占用个数, datatype: bigint, columntype: 1}
-  - {feild: sectors_name, feildName: 共站同覆盖小区名称, datatype: character varying, columntype: 1}
-  - {feild: bh_rru_pdcchcceavail, feildName: 忙时PDCCH信道CCE可用个数, datatype: bigint, columntype: 1}
   - {feild: bh_pdcchcceoccupancyrate, feildName: 忙时PDCCH信道CCE占用率(%), datatype: decimal, columntype: 1}
-  - {feild: bh_rru_puschprbassn, feildName: 忙时上行PUSCH PRB占用个数, datatype: decimal, columntype: 1}
-  - {feild: bh_rru_puschprbtot, feildName: 忙时上行PUSCH PRB可用个数, datatype: decimal, columntype: 1}
   - {feild: bh_prbassnrateul, feildName: 忙时上行PRB平均利用率(%), datatype: decimal, columntype: 1}
-  - {feild: bh_rru_pdschprbassn, feildName: 忙时下行PDSCH PRB占用个数, datatype: decimal, columntype: 1}
-  - {feild: bh_rru_pdschprbtot, feildName: 忙时下行PDSCH PRB可用个数, datatype: decimal, columntype: 1}
   - {feild: bh_prbassnratedl, feildName: 忙时下行PRB平均利用率(%), datatype: decimal, columntype: 1}
-  - {feild: bh_rlc_upoctul, feildName: 忙时RLC层上行业务字节数(G), datatype: decimal, columntype: 1}
-  - {feild: bh_rlc_upoctdl, feildName: 忙时RLC层下行业务字节数(G), datatype: decimal, columntype: 1}
-  - {feild: bh_mac_cpoctul, feildName: 忙时MAC层上行业务流量(G), datatype: decimal, columntype: 1}
-  - {feild: bh_mac_cpoctdl, feildName: 忙时MAC层下行业务流量(G), datatype: decimal, columntype: 1}
-  - {feild: bh_pdcp_upoctul, feildName: 忙时PDCP上行业务字节数(G), datatype: decimal, columntype: 1}
-  - {feild: bh_pdcp_upoctdl, feildName: 忙时PDCP下行业务字节数(G), datatype: decimal, columntype: 1}
-  - {feild: rlc_upoctul, feildName: 日RLC层上行业务字节数(G), datatype: decimal, columntype: 1}
-  - {feild: rlc_upoctdl, feildName: 日RLC层下行业务字节数(G), datatype: decimal, columntype: 1}
+  - {feild: bh_cellprbrate, feildName: 忙时小区PRB利用率, datatype: character varying, columntype: 1}
   - {feild: rlc_upoctudl, feildName: 日RLC层上下行总流量(G), datatype: decimal, columntype: 1}
-  - {feild: mac_cpoctudl, feildName: 日MAC层上下行总流量(G), datatype: decimal, columntype: 1}
   - {feild: pdcp_upoctudl, feildName: 日PDCP层上下行总流量(G), datatype: decimal, columntype: 1}
   - {feild: bh_rrc_connmean, feildName: RRC连接平均数-忙时, datatype: character varying, columntype: 2}
-  - {feild: is_highload, feildName: 是否高负荷待扩容小区, datatype: boolean, columntype: 1}
   - {feild: bh_rrc_connmax, feildName: RRC连接最大数-忙时, datatype: character varying, columntype: 2}
-  - {feild: bh_flow_nbrattestab, feildName: Flow建立请求数-忙时, datatype: bigint, columntype: 1}
-  - {feild: bh_flow_nbrsuccestab, feildName: Flow建立成功数-忙时, datatype: bigint, columntype: 1}
-  - {feild: bh_kpi_flowsuccconnrate, feildName: QoS Flow建立成功率-忙时, datatype: decimal, columntype: 1}
-  - {feild: grid_road, feildName: 路测网格, datatype: character varying, columntype: 1}
-  - {feild: second_scene_detail, feildName: 二级场景细化, datatype: character varying, columntype: 1}
-  - {feild: bh_puschprbtot_reuse, feildName: 忙时上行PRB可用空分层数, datatype: decimal, columntype: 1}
-  - {feild: bh_puschprbassn_reuse, feildName: 忙时上行PRB占用空分层数, datatype: decimal, columntype: 1}
-  - {feild: bh_avgdtchmimolayerul, feildName: 忙时上行业务信道平均空分层数, datatype: decimal, columntype: 1}
-  - {feild: bh_pdschprbtot_reuse, feildName: 忙时下行PRB可用空分层数, datatype: decimal, columntype: 1}
-  - {feild: bh_pdschprbassn_reuse, feildName: 忙时下行PRB占用空分层数, datatype: decimal, columntype: 1}
-  - {feild: bh_avgdtchmimolayerdl, feildName: 忙时下行业务信道平均空分层数, datatype: decimal, columntype: 1}
-  - {feild: maxdtchmimolayerul, feildName: 上行业务信道最大空分层数, datatype: decimal, columntype: 1}
-  - {feild: maxdtchmimolayerdl, feildName: 下行业务信道最大空分层数, datatype: decimal, columntype: 1}
-  - {feild: bh_dtchmimoprbassnrateul, feildName: 忙时上行业务信道空分PRB占用率, datatype: decimal, columntype: 1}
-  - {feild: bh_dtchmimoprbassnratedl, feildName: 忙时下行业务信道空分PRB占用率, datatype: decimal, columntype: 1}
-  - {feild: bh_cellprbrate, feildName: 忙时小区PRB利用率, datatype: decimal, columntype: 1}
-  - {feild: bh_flow_nbrhoinc, feildName: 忙时切换进入Flow数, datatype: bigint, columntype: 1}
-  - {feild: bh_upoctudl_perflow, feildName: 忙时每Flow流量, datatype: decimal, columntype: 1}
-  - {feild: band_width, feildName: 小区带宽, datatype: character varying, columntype: 1}
-  - {feild: ssbfrequenc, feildName: 中心载频号, datatype: character varying, columntype: 1}
-  - {feild: txrxmode, feildName: 射频通道数, datatype: character varying, columntype: 1}
-  - {feild: area_type, feildName: 区域类型, datatype: character varying, columntype: 1}
+  - {feild: is_highload, feildName: 是否高负荷待扩容小区, datatype: boolean, columntype: 1}
   - {feild: micro_grid, feildName: 微网格标识, datatype: character varying, columntype: 1}
-  - {feild: cover_scene1, feildName: 覆盖场景1, datatype: character varying, columntype: 1}
-  - {feild: cover_scene2, feildName: 覆盖场景2, datatype: character varying, columntype: 1}
-  - {feild: cover_scene3, feildName: 覆盖场景3, datatype: character varying, columntype: 1}
-  - {feild: cover_scene4, feildName: 覆盖场景4, datatype: character varying, columntype: 1}
 
 # 查询条件
 conditions:

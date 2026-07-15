@@ -23,33 +23,14 @@ fields:
   - {feild: grid, feildName: 责任网格, datatype: character varying, columntype: 1}
   - {feild: area, feildName: 区县, datatype: character varying, columntype: 1}
   - {feild: nrcell_name, feildName: 小区名称, datatype: character varying, columntype: 1}
-  # VoNR语音指标
-  - {feild: vonr_ul_tunzi_len, feildName: VoNR语音上行吞字时长(s), datatype: numeric, columntype: 1}
-  - {feild: vonr_ul_dantong_len, feildName: VoNR语音上行单通时长(s), datatype: numeric, columntype: 1}
-  - {feild: vonr_ul_duanxu_len, feildName: VoNR语音上行断续时长(s), datatype: numeric, columntype: 1}
-  - {feild: vonr_ul_voice_sum_len, feildName: VoNR语音上行总时长(s), datatype: numeric, columntype: 1}
-  - {feild: vonr_ans_voice_call, feildName: VoNR语音通话总次数, datatype: numeric, columntype: 1}
-  # MOS指标
+  - {feild: sacs_start_vonr_call_net_succ_rate, feildName: VoNR呼叫网络接通率（SA控制起始）, datatype: numeric, columntype: 1}
+  - {feild: sacs_start_vonr_call_drop_rate, feildName: VoNR掉话率（SA控制起始）, datatype: numeric, columntype: 1}
   - {feild: mconv_rtp_ul_mos_avg, feildName: RTP上行平均MOS, datatype: numeric, columntype: 1}
   - {feild: mconv_rtp_dl_mos_avg, feildName: RTP下行平均MOS, datatype: numeric, columntype: 1}
   - {feild: mconv_rtp_ul_pkts_lost_rate, feildName: RTP上行丢包率, datatype: numeric, columntype: 1}
   - {feild: mconv_rtp_dl_pkts_lost_rate, feildName: RTP下行丢包率, datatype: numeric, columntype: 1}
-  # VoNR质差率
   - {feild: msli_ul_tunzi_len_rate, feildName: VoNR语音上行质差率, datatype: numeric, columntype: 1}
   - {feild: msli_dl_tunzi_len_rate, feildName: VoNR语音下行质差率, datatype: numeric, columntype: 1}
-  # 扩展字段
-  - {feild: micro_grid, feildName: 微网格标识, datatype: character varying, columntype: 1}
-  - {feild: cover_scene1, feildName: 覆盖场景1, datatype: character varying, columntype: 1}
-  - {feild: cover_scene2, feildName: 覆盖场景2, datatype: character varying, columntype: 1}
-  - {feild: cover_scene3, feildName: 覆盖场景3, datatype: character varying, columntype: 1}
-  - {feild: cover_scene4, feildName: 覆盖场景4, datatype: character varying, columntype: 1}
-  - {feild: grid_road, feildName: 网格道路, datatype: character varying, columntype: 1}
-  - {feild: marketduty, feildName: 市场职责, datatype: character varying, columntype: 1}
-  - {feild: vendor, feildName: 厂商, datatype: character varying, columntype: 1}
-  - {feild: state, feildName: 网元状态, datatype: character varying, columntype: 1}
-  - {feild: coverage_type, feildName: 覆盖类型, datatype: character varying, columntype: 1}
-  - {feild: network_type, feildName: 网络制式, datatype: character varying, columntype: 1}
-  - {feild: freq, feildName: 频段_无线, datatype: character varying, columntype: 1}
 
 # 查询条件
 conditions:

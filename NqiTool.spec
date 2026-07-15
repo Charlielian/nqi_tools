@@ -14,7 +14,6 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('config.yaml', '.'),
         ('table_configs', 'table_configs'),
         ('custom_configs', 'custom_configs'),
     ],
@@ -41,6 +40,7 @@ a = Analysis(
         'gui.payload_templates',
         'gui.theme',
         'gui.first_run',
+        'gui.table_config_loader',
         # 第三方库
         'requests',
         'pandas',
@@ -54,7 +54,6 @@ a = Analysis(
         'PIL.ImageFilter',
         'PIL.ImageEnhance',
         'PIL.ImageDraw',
-        'pytesseract',
         'Crypto',
         'Cryptodome',
         'Cryptodome.Cipher',
