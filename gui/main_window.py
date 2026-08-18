@@ -10,9 +10,7 @@ import threading
 import logging
 import os
 import queue
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import pandas as pd
 from datetime import datetime, timedelta
 
 from gui.widgets import LogTextHandler, TableConfig, MultiSelectDropdown
@@ -21,12 +19,15 @@ from gui.theme import colors, fonts, spacing
 from gui.first_run import check_first_run, show_first_run_wizard
 from core.auth import LoginManager
 from core.query import JXCXQuery
-from core.export import export_to_excel
-from utils.logger import ensure_dirs, setup_report_logging
-from utils.config import LOG_DIR, OUTPUT_DIR, EXPIRY_DATE, DEFAULT_USERNAME, DEFAULT_PASSWORD
+from core.workers import QueryWorker
+from utils.logger import ensure_dirs, setup_report_logging, get_report_logger
+from utils.config import (
+    LOG_DIR, OUTPUT_DIR, EXPIRY_DATE, DEFAULT_USERNAME, DEFAULT_PASSWORD,
+    LOGGING_DETAILED,
+)
 
 
-def check_and_setup_credentials():
+def check_and_setup_credentials(parent=None):
     """检查并设置凭证，如需首次运行引导则显示向导
 
     Returns:
@@ -35,23 +36,27 @@ def check_and_setup_credentials():
         - needs_setup=False: 使用默认/已保存的凭证
     """
     if check_first_run():
-        success, credentials = show_first_run_wizard()
+        success, credentials = show_first_run_wizard(parent=parent)
         if not success:
             return True, None
         return False, credentials
     return False, None
 
 
+# TODO: 本文件 1517 行仍然较大，建议进一步拆分：
+#       1. 主窗口布局构建 → gui/layout.py
+#       2. 计算列逻辑 → core/calculations.py（已在 gui/calculators/）
 class NqiToolGUI:
     """NQI工具主窗口"""
 
-    def __init__(self, root, expiry_time=None):
+    def __init__(self, root, expiry_time=None, credentials=None):
         self.root = root
         self.root.title("NQI工具")
         self.root.geometry("1100x800")
         self.root.minsize(800, 600)
 
         self.expiry_time = datetime.strptime(EXPIRY_DATE, "%Y-%m-%d") if not expiry_time else expiry_time
+        self.credentials = credentials or {}
         self.session = None
         self.jxcx = None
         self.query_thread = None
@@ -79,30 +84,39 @@ class NqiToolGUI:
         self.load_config()
 
     def _setup_logging(self):
-        """设置日志系统"""
+        """设置日志系统（简化版，避免重复添加 handler）
+
+        根据 config.yaml 中 logging.detailed 的值控制详细程度：
+        - True  → LogTextHandler 显示 DEBUG 级别（含详细调试信息）
+        - False → LogTextHandler 显示 INFO 级别（仅关键信息）
+        """
         import logging
         try:
             ensure_dirs()
             log_filename = f"NqiTool_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
             self.log_file_path = os.path.join(LOG_DIR, log_filename)
 
-            # 使用新的报表日志系统
+            # 初始化报表日志系统（仅设置目录，不添加 handler）
             setup_report_logging(LOG_DIR, console=True)
 
-            # 设置主窗口日志记录器
+            # 主窗口日志记录器
             self.logger = logging.getLogger('NqiTool')
             self.logger.setLevel(logging.DEBUG)
+            self.logger.propagate = False  # 避免向 root logger 传播
 
-            # 添加控制台输出
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.INFO)
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
-                                        datefmt='%H:%M:%S')
-            console_handler.setFormatter(formatter)
-            self.logger.addHandler(console_handler)
+            # 文件日志处理器（始终记录 DEBUG 级别）
+            file_handler = logging.FileHandler(self.log_file_path, encoding='utf-8')
+            file_handler.setLevel(logging.DEBUG)
+            file_formatter = logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            file_handler.setFormatter(file_formatter)
+            self.logger.addHandler(file_handler)
 
             self.logger.info("日志系统初始化完成")
             self.logger.info(f"日志根目录: {LOG_DIR}")
+            self.logger.info(f"详细日志模式: {'开启' if LOGGING_DETAILED else '关闭'}")
         except Exception as e:
             self.logger = logging.getLogger('NqiTool')
             self.logger.setLevel(logging.DEBUG)
@@ -227,7 +241,9 @@ class NqiToolGUI:
                 bg='white', fg='#5f6368').pack(anchor='w')
         self.username_entry = tk.Entry(user_frame, font=('Microsoft YaHei UI', 10),
                              relief='flat', bg='#f8f9fa', bd=0, width=15)
-        self.username_entry.insert(0, DEFAULT_USERNAME)
+        username = self.credentials.get('username', DEFAULT_USERNAME)
+        password = self.credentials.get('password', DEFAULT_PASSWORD)
+        self.username_entry.insert(0, username)
         self.username_entry.pack(fill=tk.X, pady=(2, 0), ipady=4)
 
         # 密码
@@ -238,7 +254,7 @@ class NqiToolGUI:
                 bg='white', fg='#5f6368').pack(anchor='w')
         self.password_entry = tk.Entry(pass_frame, font=('Microsoft YaHei UI', 10),
                              show="●", relief='flat', bg='#f8f9fa', bd=0, width=15)
-        self.password_entry.insert(0, DEFAULT_PASSWORD)
+        self.password_entry.insert(0, password)
         self.password_entry.pack(fill=tk.X, pady=(2, 0), ipady=4)
 
         # 登录状态图标和标签
@@ -498,33 +514,8 @@ class NqiToolGUI:
                                    command=self._on_field_mode_changed)
         dynamic_rb.pack(side=tk.LEFT)
 
-        # 新增：配置来源切换（用于验证YAML改造是否成功）
-        config_source_frame = tk.Frame(field_mode_row, bg='white')
-        config_source_frame.pack(side=tk.LEFT, padx=(20, 0))
-        tk.Label(config_source_frame, text="配置来源", font=('Microsoft YaHei UI', 8),
-                bg='white', fg='#5f6368').pack(anchor='w')
-
-        config_source_inner = tk.Frame(config_source_frame, bg='white')
-        config_source_inner.pack(pady=(2, 0))
-
-        self.config_source_var = tk.StringVar(value='yaml')
-        yaml_rb = tk.Radiobutton(config_source_inner, text="YAML",
-                                 variable=self.config_source_var, value='yaml',
-                                 font=('Microsoft YaHei UI', 8, 'bold'),
-                                 bg='white', fg='#202124',
-                                 activebackground='white',
-                                 cursor='hand2',
-                                 command=self._on_config_source_changed)
-        yaml_rb.pack(side=tk.LEFT, padx=(0, 8))
-
-        old_rb = tk.Radiobutton(config_source_inner, text="旧代码",
-                               variable=self.config_source_var, value='old',
-                               font=('Microsoft YaHei UI', 8, 'bold'),
-                               bg='white', fg='#202124',
-                               activebackground='white',
-                               cursor='hand2',
-                               command=self._on_config_source_changed)
-        old_rb.pack(side=tk.LEFT)
+        # 配置来源已固定为硬编码模式（YAML配置已禁用）
+        self.config_source_var = tk.StringVar(value='old')
 
         # 第三行：多日模式选项（在日期范围下方，按钮上方）
         mode_row = tk.Frame(body, bg='white')
@@ -658,9 +649,9 @@ class NqiToolGUI:
                                                   bd=1)
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
-        # 添加日志处理器
+        # 添加日志处理器（根据配置控制详细程度）
         handler = LogTextHandler(self.log_text)
-        handler.setLevel(logging.INFO)
+        handler.setLevel(logging.DEBUG if LOGGING_DETAILED else logging.INFO)
         self.logger.addHandler(handler)
 
     def _update_license_display(self):
@@ -746,9 +737,8 @@ F1        - 显示此帮助
         messagebox.showinfo("快捷键帮助", help_text.strip())
 
     def _on_start_export(self):
-        """开始导出（快捷键触发）"""
-        # 触发导出按钮
-        self._on_export()
+        """Ctrl+S 快捷键触发查询。"""
+        self._on_query()
 
     def _on_cancel_query(self):
         """取消查询（快捷键触发）"""
@@ -803,15 +793,22 @@ F1        - 显示此帮助
 
     def _on_multi_day_per_sheet_toggle(self):
         """按日分Sheet切换事件"""
-        pass
+        if self.multi_day_per_sheet_var.get():
+            # 按日分Sheet 与 按日+按地市导出 互斥
+            self.multi_day_per_city_var.set(False)
+            self.log("已切换为按日分Sheet模式", "INFO")
 
     def _on_multi_day_per_city_toggle(self):
         """按日+按地市导出切换事件"""
-        pass
+        if self.multi_day_per_city_var.get():
+            # 按日+按地市 与 按日分Sheet 互斥
+            self.multi_day_per_sheet_var.set(False)
+            self.log("已切换为按日+按地市导出模式", "INFO")
 
     def _on_single_city_parallel_toggle(self):
         """单地市多线程切换事件"""
-        pass
+        if self.single_city_parallel_var.get():
+            self.log("已启用单地市多线程模式", "INFO")
 
     def _on_custom_fields_toggle(self):
         """自定义字段切换事件"""
@@ -839,24 +836,68 @@ F1        - 显示此帮助
         self.log(f"切换字段获取方式: {mode_text}", "INFO")
 
     def _on_config_source_changed(self):
-        """配置来源切换事件 - 用于验证YAML改造是否成功"""
-        source = self.config_source_var.get()
-        from gui.widgets import TableConfig
+        """配置来源切换事件 - 已禁用（YAML配置不可用）
 
-        if source == 'yaml':
-            TableConfig.set_config_source('yaml')
-            self.log("已切换到 YAML 配置源", "INFO")
-            # 显示YAML支持的表格数量
-            yaml_count = len(TableConfig._get_yaml_loader().get_all_names())
-            self.log(f"  YAML配置支持 {yaml_count} 个表格", "INFO")
-        else:
-            TableConfig.set_config_source('old')
-            self.log("已切换到旧代码配置源", "INFO")
-            old_count = len(TableConfig.TABLE_CONFIGS)
-            self.log(f"  旧代码配置支持 {old_count} 个表格", "INFO")
+        注意：YAML配置已确认存在过多问题被禁用，此方法保留但不再生效。
+        """
+        self.log("配置来源已固定为硬编码模式（YAML配置已禁用）", "WARNING")
+
+    def _render_table_field_error(self, parent, table_name):
+        """在字段选择窗口中渲染加载失败的提示"""
+        frame = tk.Frame(parent, bg='white', bd=1, relief='solid')
+        frame.pack(fill=tk.X, pady=5, padx=10)
+        tk.Label(
+            frame, text=table_name,
+            font=('Microsoft YaHei UI', 10, 'bold'),
+            bg='white', fg='#165DFF'
+        ).pack(anchor='w', padx=5, pady=3)
+        tk.Label(
+            frame, text="（字段加载失败，请重试）",
+            font=('Microsoft YaHei UI', 9),
+            bg='#fef2f2', fg='#dc2626'
+        ).pack(anchor='w', padx=5, pady=(0, 5))
+
+    def _render_table_field_rows(self, parent, table_name, configs, field_vars):
+        """在字段选择窗口中渲染一个表的字段复选框列表"""
+        # 表格标题
+        table_frame = tk.Frame(parent, bg='white', bd=1, relief='solid')
+        table_frame.pack(fill=tk.X, pady=5, padx=10)
+        tk.Label(
+            table_frame, text=table_name,
+            font=('Microsoft YaHei UI', 10, 'bold'),
+            bg='white', fg='#165DFF'
+        ).pack(anchor='w', padx=5, pady=3)
+
+        # 字段选择
+        fields_frame = tk.Frame(parent, bg='white')
+        fields_frame.pack(fill=tk.X, pady=(0, 10), padx=10)
+
+        # 按行排列，每行4个复选框
+        row_frame = None
+        for i, config in enumerate(configs):
+            if i % 4 == 0:
+                row_frame = tk.Frame(fields_frame, bg='white')
+                row_frame.pack(fill=tk.X, pady=2)
+
+            field_name = config.get('columnname_cn', config.get('columnname', ''))
+            field_key = config.get('columnname', '')
+
+            var = tk.BooleanVar(value=field_key in self.selected_fields.get(table_name, []))
+            field_vars[(table_name, field_key)] = var
+
+            tk.Checkbutton(
+                row_frame, text=field_name,
+                variable=var,
+                font=('Microsoft YaHei UI', 9),
+                bg='white', fg='#202124',
+                selectcolor='#165DFF',
+                activebackground='white',
+                activeforeground='#165DFF',
+                cursor='arrow'
+            ).pack(side=tk.LEFT, padx=10, pady=1, fill=tk.X, expand=True)
 
     def _show_field_selector(self):
-        """显示字段选择窗口"""
+        """显示字段选择窗口（后台线程异步获取字段配置，避免阻塞UI）"""
         # 检查登录状态
         if not self.jxcx:
             messagebox.showwarning("警告", "请先登录后再选择字段")
@@ -898,82 +939,76 @@ F1        - 显示此帮助
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # 字段选择区域
+        # 加载提示
+        loading_label = ttk.Label(
+            scrollable_frame, text="正在加载字段配置...",
+            font=('Microsoft YaHei UI', 10), foreground='#5f6368'
+        )
+        loading_label.pack(pady=20)
+
+        # 全局字段状态（线程安全：仅通过 root.after 在主线程读写）
         field_vars = {}
-        for table_name in selected_tables:
-            # 动态获取字段配置
-            if table_name not in self.field_configs and self.jxcx:
+
+        def _load_all_configs():
+            """后台线程：批量获取所有表的字段配置"""
+            results = {}
+            for table_name in selected_tables:
+                if table_name in self.field_configs:
+                    results[table_name] = self.field_configs[table_name]
+                    continue
                 table_config = TableConfig.get_table_config(table_name)
-                if table_config:
-                    try:
-                        self.log(f"正在获取 {table_name} 的字段配置...", "INFO")
-                        configs = self.jxcx.get_field_config(
-                            table_config['table_key'],
-                            table_config['fieldtype'],
-                            table_config['api_type']
-                        )
-                        if configs:
-                            self.field_configs[table_name] = configs
-                            self.log(f"获取到 {table_name} 的 {len(configs)} 个字段", "SUCCESS")
-                        else:
-                            self.log(f"获取 {table_name} 的字段配置失败，可能该报表不支持自定义字段", "WARNING")
-                    except Exception as e:
-                        self.log(f"获取字段配置异常: {e}", "ERROR")
+                if not table_config:
+                    results[table_name] = None
+                    continue
+                try:
+                    configs = self.jxcx.get_field_config(
+                        table_config['table_key'],
+                        table_config['fieldtype'],
+                        table_config['api_type'],
+                        table_name=table_config.get('table_name')
+                    )
+                    results[table_name] = configs
+                except Exception as e:
+                    results[table_name] = {'__error__': str(e)}
+            return results
 
-            # 显示字段选择
-            if table_name in self.field_configs:
-                configs = self.field_configs[table_name]
-                
-                # 表格标题
-                table_frame = tk.Frame(scrollable_frame, bg='white', bd=1, relief='solid')
-                table_frame.pack(fill=tk.X, pady=5, padx=10)
-                
-                table_title = tk.Label(table_frame, text=table_name, 
-                                     font=('Microsoft YaHei UI', 10, 'bold'),
-                                     bg='white', fg='#165DFF')
-                table_title.pack(anchor='w', padx=5, pady=3)
+        def _on_configs_loaded(results):
+            """主线程：加载完成后渲染字段选择UI"""
+            loading_label.destroy()
+            for table_name in selected_tables:
+                configs = results.get(table_name)
+                if isinstance(configs, dict) and '__error__' in configs:
+                    self.log(f"获取 {table_name} 字段配置异常: {configs['__error__']}", "ERROR")
+                    self._render_table_field_error(scrollable_frame, table_name)
+                    continue
+                if configs:
+                    self.field_configs[table_name] = configs
+                    self.log(f"获取到 {table_name} 的 {len(configs)} 个字段", "SUCCESS")
+                    self._render_table_field_rows(
+                        scrollable_frame, table_name, configs, field_vars
+                    )
+                else:
+                    self.log(f"获取 {table_name} 的字段配置失败，可能该报表不支持自定义字段", "WARNING")
+                    self._render_table_field_error(scrollable_frame, table_name)
 
-                # 字段选择
-                fields_frame = tk.Frame(scrollable_frame, bg='white')
-                fields_frame.pack(fill=tk.X, pady=(0, 10), padx=10)
+        def _fetch_worker():
+            results = _load_all_configs()
+            self.root.after(0, lambda: _on_configs_loaded(results))
 
-                # 按行排列，每行4个复选框
-                row_frame = None
-                for i, config in enumerate(configs):
-                    if i % 4 == 0:
-                        row_frame = tk.Frame(fields_frame, bg='white')
-                        row_frame.pack(fill=tk.X, pady=2)
-
-                    field_name = config.get('columnname_cn', config.get('columnname', ''))
-                    field_key = config.get('columnname', '')
-                    
-                    var = tk.BooleanVar(value=True)  # 默认全选
-                    field_vars[(table_name, field_key)] = var
-
-                    cb = tk.Checkbutton(row_frame, text=field_name,
-                                       variable=var,
-                                       font=('Microsoft YaHei UI', 9),
-                                       bg='white', fg='#202124',
-                                       selectcolor='#165DFF',
-                                       activebackground='white',
-                                       activeforeground='#165DFF',
-                                       cursor='arrow')
-                    cb.pack(side=tk.LEFT, padx=10, pady=1, fill=tk.X, expand=True)
+        threading.Thread(target=_fetch_worker, daemon=True).start()
 
         # 按钮区域
         btn_frame = tk.Frame(field_window, bg='white')
         btn_frame.pack(fill=tk.X, pady=10, padx=10)
 
         def on_ok():
-            # 保存选中的字段
-            self.selected_fields = {}
+            selected_fields = {}
             for (table_name, field_key), var in field_vars.items():
                 if var.get():
-                    if table_name not in self.selected_fields:
-                        self.selected_fields[table_name] = []
-                    self.selected_fields[table_name].append(field_key)
-            
-            # 显示选中的字段数量
+                    selected_fields.setdefault(table_name, []).append(field_key)
+
+            self.selected_fields.clear()
+            self.selected_fields.update(selected_fields)
             total_fields = sum(len(fields) for fields in self.selected_fields.values())
             self.log(f"已选择 {total_fields} 个字段", "INFO")
             field_window.destroy()
@@ -1140,11 +1175,24 @@ F1        - 显示此帮助
         self._total_expected = 0
 
     def open_output_dir(self):
-        """打开输出目录"""
-        import webbrowser
-        output_dir = os.path.join(os.getcwd(), 'data_output')
+        """打开输出目录（跨平台）"""
+        output_dir = OUTPUT_DIR
         os.makedirs(output_dir, exist_ok=True)
-        webbrowser.open(output_dir)
+
+        import subprocess
+        import sys
+
+        try:
+            if sys.platform == 'win32':
+                os.startfile(output_dir)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', output_dir], check=True)
+            else:
+                # Linux / other Unix
+                subprocess.run(['xdg-open', output_dir], check=True)
+            self.log(f"已打开输出目录: {output_dir}", "INFO")
+        except Exception as e:
+            self.log(f"打开输出目录失败: {e}", "ERROR")
 
     def _on_login(self):
         """登录按钮点击事件"""
@@ -1164,6 +1212,7 @@ F1        - 显示此帮助
             if login_mgr.login():
                 self.session = login_mgr.sess
                 self.jxcx = JXCXQuery(self.session)
+                self._query_worker_inst = None
                 self.root.after(0, self._on_login_success)
             else:
                 self.root.after(0, self._update_login_failed_ui)
@@ -1291,7 +1340,8 @@ F1        - 显示此帮助
 
         except Exception as e:
             import traceback
-            self.root.after(0, lambda: self.log(f"合成失败: {e}\n{traceback.format_exc()}", "ERROR"))
+            error_text = traceback.format_exc()
+            self.root.after(0, lambda e=error_text: self.log(e, "ERROR"))
             self.root.after(0, lambda: self._on_synthesize_complete(False))
 
     def _on_synthesize_complete(self, success):
@@ -1322,1314 +1372,57 @@ F1        - 显示此帮助
         self.log("已发送取消请求，请等待当前批次完成...", "WARNING")
 
     def _query_worker(self, table_names, start_date, end_date, city):
-        """查询工作线程"""
-        try:
-            from datetime import datetime, timedelta
+        """查询工作线程（委托给 QueryWorker）"""
+        self.jxcx.reset_cancel_flag()
+        w = self._get_query_worker()
+        w.query_worker(
+            table_names, start_date, end_date, city,
+            on_complete=self._on_query_complete,
+            on_failed=self._on_query_failed
+        )
 
-            total_tables = len(table_names)
-            multi_day = self.multi_day_var.get()
-            multi_day_per_sheet = self.multi_day_per_sheet_var.get()
-            multi_day_per_city = self.multi_day_per_city_var.get()
-            single_city_parallel = self.single_city_parallel_var.get()
-
-            # 输出当前配置来源
-            config_source = self.config_source_var.get()
-            self.log(f"当前配置来源: {config_source} (yaml=使用YAML配置, old=使用旧代码配置)", "INFO")
-
-            selected_city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
-            should_parallel_tables = (
-                single_city_parallel
-                and not multi_day
-                and len(selected_city_list) == 1
-                and len(table_names) > 1
+    def _get_query_worker(self):
+        """获取或创建 QueryWorker 实例"""
+        worker = getattr(self, '_query_worker_inst', None)
+        if worker is None or worker.session is not self.session or worker.jxcx is not self.jxcx:
+            worker = QueryWorker(
+                session=self.session,
+                jxcx=self.jxcx,
+                log_func=self.log,
+                progress_func=self.update_progress,
+                after_func=self.root.after,
+                field_mode_var=getattr(self, 'field_mode_var', None),
+                custom_fields_var=getattr(self, 'custom_fields_var', None),
+                selected_fields=dict(getattr(self, 'selected_fields', {})),
+                multi_day_var=getattr(self, 'multi_day_var', None),
+                multi_day_per_sheet_var=getattr(self, 'multi_day_per_sheet_var', None),
+                multi_day_per_city_var=getattr(self, 'multi_day_per_city_var', None),
+                single_city_parallel_var=getattr(self, 'single_city_parallel_var', None),
             )
-
-            if should_parallel_tables:
-                self.log(f"单地市多线程模式已启用: {selected_city_list[0]}，共 {len(table_names)} 个表", "INFO")
-                self._query_tables_parallel(table_names, start_date, end_date, selected_city_list[0], config_source)
-                self.root.after(0, self._on_query_complete)
-                return
-
-            for idx, table_name in enumerate(table_names):
-                self.log(f"正在查询: {table_name}", "INFO")
-                self.update_progress(idx, total_tables, f"正在查询: {table_name}")
-                table_config = TableConfig.get_table_config(table_name)
-                if not table_config:
-                    self.log(f"未找到表配置: {table_name}", "ERROR")
-                    continue
-
-                self.jxcx.enter_jxcx()
-
-                # 4G语音小区：需要分别查询VoLTE和EPSFB表后合并（跳过payload_func处理）
-                is_4g_voice = table_config.get('is_4g_voice', False)
-                if is_4g_voice:
-                    self.log(f"4G语音小区报表：VoLTE + EPSFB 联合查询", "INFO")
-                    self._query_4g_voice_table(
-                        table_config, start_date, end_date, city,
-                        multi_day, multi_day_per_sheet, multi_day_per_city
-                    )
-                    self.log(f"查询完成: {table_name}", "SUCCESS")
-                    continue
-
-                # 检查是否有硬编码的payload函数
-                payload_func = table_config.get('payload_func')
-
-                # 检查是否有YAML配置的条件（用于构建payload）
-                yaml_conditions = table_config.get('conditions')
-                has_yaml_conditions = yaml_conditions and isinstance(yaml_conditions, dict) and yaml_conditions.get('where')
-
-                if payload_func:
-                    # 使用Python payload函数（向后兼容）
-                    payload_template = payload_func()
-                    if payload_template and payload_template.get('__gongcan__'):
-                        # 工参报表需要特殊处理（不需要时间条件）
-                        self.log(f"工参报表: 使用table类型API", "INFO")
-                        conditions = table_config.get('default_conditions', []).copy()
-                        if city:
-                            conditions.append({'field': 'city', 'operator': 'in', 'value': city})
-
-                        gongcan_payload = self.jxcx.build_payload_from_config(
-                            payload_template.get('table_key'),
-                            payload_template.get('fieldtype'),
-                            conditions,
-                            payload_template.get('api_type', 'table'),
-                            dimension_override={
-                                'geographicdimension': payload_template.get('geographicdimension', ''),
-                                'timedimension': payload_template.get('timedimension', ''),
-                                'enodebField': payload_template.get('enodebField', ''),
-                                'cgiField': payload_template.get('cgiField', ''),
-                                'timeField': payload_template.get('timeField', ''),
-                                'cellField': payload_template.get('cellField', ''),
-                                'cityField': payload_template.get('cityField', '')
-                            }
-                        )
-                        if gongcan_payload:
-                            df = self.jxcx.get_table(gongcan_payload, report_name=table_name)
-                            if not df.empty:
-                                filename = f"{table_name}.xlsx"
-                                filepath = export_to_excel(df, filename, table_name)
-                                if filepath:
-                                    self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-                                else:
-                                    self.log(f"导出失败: {table_name}", "ERROR")
-                            else:
-                                self.log(f"查询结果为空: {table_name}", "WARNING")
-                        self.log(f"查询完成: {table_name}", "SUCCESS")
-                        continue
-
-                    # 按日查询模式
-                    if multi_day:
-                        # 按日查询模式：每天分别查询
-                        current_date = datetime.strptime(start_date, '%Y-%m-%d')
-                        end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
-                        dates = []
-                        while current_date <= end_datetime:
-                            dates.append(current_date.strftime('%Y-%m-%d'))
-                            current_date += timedelta(days=1)
-
-                        total_days = len(dates)
-                        selected_city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
-                        should_split_by_city = multi_day_per_city and len(selected_city_list) >= 1
-                        query_cities = selected_city_list if should_split_by_city else ([city] if city else [])
-
-                        # 构建所有查询任务：(query_date, query_city, city_label)
-                        tasks = []
-                        for query_date in dates:
-                            for query_city in query_cities:
-                                tasks.append((query_date, query_city, query_city or '全部地市'))
-
-                        total_tasks = len(tasks)
-                        self.log(f"按日查询模式: 共 {total_tasks} 个任务 ({total_days} 天 x {len(query_cities)} 地市)", "INFO")
-                        if should_split_by_city:
-                            self.log(f"按日+按地市导出模式: 共 {len(query_cities)} 个地市", "INFO")
-
-                        calc_columns = table_config.get('calc_columns', [])
-                        add_calc = bool(calc_columns)
-                        all_dfs = []
-                        city_day_dfs = []
-
-                        def _query_single_task(task_data):
-                            q_date, q_city, q_city_label = task_data
-                            try:
-                                payload = payload_func(q_date, q_date, q_city)
-                                if not payload:
-                                    return None, None
-                                if 'where' in payload:
-                                    for cond in payload['where']:
-                                        if 'starttime' in cond.get('feild', '') and 'time' in cond.get('feild', '').lower():
-                                            pass  # 调试日志移至主线程
-                                df = self.jxcx.get_table(payload, report_name=table_name)
-                                if df.empty:
-                                    return None, None
-                                if add_calc:
-                                    if '4G全程完好率' in table_name:
-                                        df = self._add_4g_wanchenglv_calc_columns(df)
-                                    elif '5G全程完好率' in table_name:
-                                        df = self._add_5g_wanchenglv_calc_columns(df)
-                                return q_date, q_city_label, df
-                            except Exception as e:
-                                return None, {'date': q_date, 'city': q_city_label, 'error': str(e)}
-
-                        completed_tasks = 0
-                        with ThreadPoolExecutor(max_workers=min(8, total_tasks)) as executor:
-                            futures = {executor.submit(_query_single_task, task): task for task in tasks}
-                            for future in as_completed(futures):
-                                result = future.result()
-                                completed_tasks += 1
-                                done_pct = completed_tasks / total_tasks
-                                self.root.after(0, lambda p=done_pct, t=completed_tasks: self.update_progress(
-                                    idx + p / total_tables, total_tables,
-                                    f"查询 {table_name} [{t}/{total_tasks}]"))
-                                if result[0] is not None:
-                                    q_date, q_city_label, df = result
-                                    if should_split_by_city:
-                                        city_day_dfs.append((f"{q_date.replace('-', '')}_{q_city_label}", df))
-                                        city_filename = f"{table_name}_{q_date}_{q_city_label}.xlsx"
-                                        city_filepath = export_to_excel(df, city_filename, table_name)
-                                        if city_filepath:
-                                            self.root.after(0, lambda fp, cnt, dt=q_date, cl=q_city_label:
-                                                self.log(f"  {dt} {cl}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
-                                                city_filepath, len(df))
-                                    elif multi_day_per_sheet:
-                                        all_dfs.append((q_date.replace('-', ''), df))
-                                    else:
-                                        all_dfs.append(df)
-                                        day_filename = f"{table_name}_{q_date}.xlsx"
-                                        day_filepath = export_to_excel(df, day_filename, table_name)
-                                        if day_filepath:
-                                            self.root.after(0, lambda fp, cnt, dt=q_date:
-                                                self.log(f"  {dt}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
-                                                day_filepath, len(df))
-                                elif result[1] is not None:
-                                    err = result[1]
-                                    self.root.after(0, lambda e=err:
-                                        self.log(f"  查询异常 [{e['date']} {e['city']}]: {e['error']}", "ERROR"))
-
-                        if should_split_by_city and city_day_dfs:
-                            self.log(f"按日+按地市导出完成: 共导出 {len(city_day_dfs)} 个文件", "SUCCESS")
-
-                        if multi_day_per_sheet and all_dfs:
-                            day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                            self._export_multi_sheet(day_filename, all_dfs, table_name)
-                            self.log(f"按日分Sheet导出完成: {day_filename}", "SUCCESS")
-
-                        if not should_split_by_city and not multi_day_per_sheet and all_dfs:
-                            combined_df = pd.concat(all_dfs, ignore_index=True)
-                            day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                            combined_filepath = export_to_excel(combined_df, day_filename, table_name)
-                            if combined_filepath:
-                                self.log(f"按日查询导出完成: {os.path.basename(combined_filepath)} ({len(combined_df)} 条)", "SUCCESS")
-
-                        if not all_dfs and not city_day_dfs:
-                            self.log(f"查询结果为空: {table_name}", "WARNING")
-                    else:
-                        # 普通模式：按日期范围查询
-                        self.log(f"使用硬编码payload模板: {table_name}", "INFO")
-                        self.log(f"  [调试] 查询日期范围: {start_date} 至 {end_date}", "INFO")
-                        payload = payload_func(start_date, end_date, city)
-
-                        if payload:
-                            # 调试日志：输出where条件中的日期
-                            if 'where' in payload:
-                                for cond in payload['where']:
-                                    if 'starttime' in cond.get('feild', ''):
-                                        self.log(f"  [调试] 日期条件: {cond.get('feild')} {cond.get('symbol')} {cond.get('val')}", "INFO")
-                            df = self.jxcx.get_table(payload, report_name=table_name)
-                            if not df.empty:
-                                # 检查是否需要添加计算列（全程完好率报表）
-                                calc_columns = table_config.get('calc_columns', [])
-                                if calc_columns:
-                                    self.log(f"[计算列] 开始为 {table_name} 添加计算列: {calc_columns}", "INFO")
-                                    try:
-                                        if '4G全程完好率' in table_name:
-                                            df = self._add_4g_wanchenglv_calc_columns(df)
-                                        elif '5G全程完好率' in table_name:
-                                            df = self._add_5g_wanchenglv_calc_columns(df)
-                                        self.log(f"[计算列] {table_name} 计算列添加完成", "SUCCESS")
-                                    except Exception as e:
-                                        self.log(f"[计算列] {table_name} 计算列添加异常: {e}", "ERROR")
-
-                                filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                                filepath = export_to_excel(df, filename, table_name)
-                                if filepath:
-                                    self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-                                else:
-                                    self.log(f"导出失败: {table_name}", "ERROR")
-                            else:
-                                self.log(f"查询结果为空: {table_name}", "WARNING")
-
-                    self.log(f"查询完成: {table_name}", "SUCCESS")
-                    continue
-
-                # 处理YAML配置的payload
-                if has_yaml_conditions:
-                    self.log(f"使用YAML配置构建payload", "INFO")
-                    # 使用TableConfig的build_payload_from_yaml方法构建payload
-                    yaml_payload = TableConfig.build_payload_from_yaml(table_name, start_date, end_date, city)
-                    if yaml_payload:
-                        df = self.jxcx.get_table(yaml_payload, report_name=table_name)
-                        if not df.empty:
-                            # 检查是否需要添加计算列
-                            calc_columns = table_config.get('calc_columns', [])
-                            if calc_columns:
-                                self.log(f"[计算列] 开始为 {table_name} 添加计算列: {calc_columns}", "INFO")
-                                try:
-                                    if '4G全程完好率' in table_name:
-                                        df = self._add_4g_wanchenglv_calc_columns(df)
-                                    elif '5G全程完好率' in table_name:
-                                        df = self._add_5g_wanchenglv_calc_columns(df)
-                                    self.log(f"[计算列] {table_name} 计算列添加完成", "SUCCESS")
-                                except Exception as e:
-                                    self.log(f"[计算列] {table_name} 计算列添加异常: {e}", "ERROR")
-
-                            filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                            filepath = export_to_excel(df, filename, table_name)
-                            if filepath:
-                                self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-                            else:
-                                self.log(f"导出失败: {table_name}", "ERROR")
-                        else:
-                            self.log(f"查询结果为空: {table_name}", "WARNING")
-                    self.log(f"查询完成: {table_name}", "SUCCESS")
-                    continue
-
-                # 获取维度参数和字段配置
-                dimension = table_config.get('dimension', {})
-                # 根据用户选择的模式决定字段获取方式
-                field_mode = getattr(self, 'field_mode_var', None)
-                use_hardcode_fields = field_mode.get() == 'hardcode' if field_mode else True
-                # 如果使用硬编码模式且有预定义字段，则使用；否则动态获取
-                fields = table_config.get('fields', None) if use_hardcode_fields else None
-                if use_hardcode_fields and fields:
-                    self.log(f"使用硬编码字段配置 (共 {len(fields)} 个字段)", "INFO")
-                elif use_hardcode_fields:
-                    self.log("使用硬编码模式但未找到预定义字段，将动态获取", "WARNING")
-                else:
-                    self.log("使用动态字段获取模式", "INFO")
-                is_gongcan = table_config.get('is_gongcan', False)
-                is_4g_voice = table_config.get('is_4g_voice', False)
-
-                # 4G语音小区：需要分别查询VoLTE和EPSFB表后合并
-                if is_4g_voice:
-                    self.log(f"4G语音小区报表：VoLTE + EPSFB 联合查询", "INFO")
-                    self._query_4g_voice_table(
-                        table_config, start_date, end_date, city,
-                        multi_day, multi_day_per_sheet, multi_day_per_city
-                    )
-                    self.log(f"查询完成: {table_name}", "SUCCESS")
-                    continue
-
-                # 工参报表不需要时间条件，直接按原逻辑处理
-                if is_gongcan:
-                    conditions = table_config.get('default_conditions', []).copy()
-                    if city:
-                        conditions.append({'field': 'city', 'operator': 'in', 'value': city})
-
-                    payload = self.jxcx.build_payload_from_config(
-                        table_config['table_key'],
-                        table_config['fieldtype'],
-                        conditions,
-                        table_config['api_type'],
-                        dimension_override=dimension if dimension else None,
-                        fields_override=fields,
-                        table_name=table_config.get('table_name')
-                    )
-
-                    if payload:
-                        df = self.jxcx.get_table(payload, report_name=table_name)
-                        if not df.empty:
-                            self._apply_custom_fields(df, table_name)
-                            filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                            filepath = export_to_excel(df, filename, table_name)
-                            if filepath:
-                                self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-                            else:
-                                self.log(f"导出失败: {table_name}", "ERROR")
-                        else:
-                            self.log(f"查询结果为空: {table_name}", "WARNING")
-                    self.log(f"查询完成: {table_name}", "SUCCESS")
-                    continue
-
-                # 非工参报表：按日查询处理
-                if multi_day:
-                    current_date = datetime.strptime(start_date, '%Y-%m-%d')
-                    end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
-                    dates = []
-                    while current_date <= end_datetime:
-                        dates.append(current_date.strftime('%Y-%m-%d'))
-                        current_date += timedelta(days=1)
-
-                    total_days = len(dates)
-                    selected_city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
-                    should_split_by_city = multi_day_per_city and len(selected_city_list) >= 1
-                    query_cities = selected_city_list if should_split_by_city else ([city] if city else [])
-
-                    tasks = []
-                    for query_date in dates:
-                        for query_city in query_cities:
-                            tasks.append((query_date, query_city, query_city or '全部地市'))
-
-                    total_tasks = len(tasks)
-                    self.log(f"按日查询模式: 共 {total_tasks} 个任务 ({total_days} 天 x {len(query_cities)} 地市)", "INFO")
-                    if should_split_by_city:
-                        self.log(f"按日+按地市导出模式: 共 {len(query_cities)} 个地市", "INFO")
-
-                    all_dfs = []
-                    city_day_dfs = []
-
-                    def _query_normal_task(task_data):
-                        q_date, q_city, q_city_label = task_data
-                        try:
-                            conditions = table_config.get('default_conditions', []).copy()
-                            conditions.append({'field': 'starttime', 'operator': '>=', 'value': q_date})
-                            conditions.append({'field': 'starttime', 'operator': '<=', 'value': q_date})
-                            if q_city:
-                                conditions.append({'field': 'city', 'operator': 'in', 'value': q_city})
-                            payload = self.jxcx.build_payload_from_config(
-                                table_config['table_key'],
-                                table_config['fieldtype'],
-                                conditions,
-                                table_config['api_type'],
-                                dimension_override=dimension if dimension else None,
-                                fields_override=fields,
-                                table_name=table_config.get('table_name')
-                            )
-                            if not payload:
-                                return None, None
-                            df = self.jxcx.get_table(payload, report_name=table_name)
-                            if df.empty:
-                                return None, None
-                            return q_date, q_city_label, df
-                        except Exception as e:
-                            return None, {'date': q_date, 'city': q_city_label, 'error': str(e)}
-
-                    completed_tasks = 0
-                    with ThreadPoolExecutor(max_workers=min(8, total_tasks)) as executor:
-                        futures = {executor.submit(_query_normal_task, task): task for task in tasks}
-                        for future in as_completed(futures):
-                            result = future.result()
-                            completed_tasks += 1
-                            done_pct = completed_tasks / total_tasks
-                            self.root.after(0, lambda p=done_pct, t=completed_tasks: self.update_progress(
-                                idx + p / total_tables, total_tables,
-                                f"查询 {table_name} [{t}/{total_tasks}]"))
-                            if result[0] is not None:
-                                q_date, q_city_label, df = result
-                                if should_split_by_city:
-                                    city_day_dfs.append((f"{q_date.replace('-', '')}_{q_city_label}", df))
-                                    city_filename = f"{table_name}_{q_date}_{q_city_label}.xlsx"
-                                    city_filepath = export_to_excel(df, city_filename, table_name)
-                                    if city_filepath:
-                                        self.root.after(0, lambda fp, cnt, dt=q_date, cl=q_city_label:
-                                            self.log(f"  {dt} {cl}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
-                                            city_filepath, len(df))
-                                elif multi_day_per_sheet:
-                                    all_dfs.append((q_date.replace('-', ''), df))
-                                else:
-                                    all_dfs.append(df)
-                                    day_filename = f"{table_name}_{q_date}.xlsx"
-                                    day_filepath = export_to_excel(df, day_filename, table_name)
-                                    if day_filepath:
-                                        self.root.after(0, lambda fp, cnt, dt=q_date:
-                                            self.log(f"  {dt}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
-                                            day_filepath, len(df))
-                            elif result[1] is not None:
-                                err = result[1]
-                                self.root.after(0, lambda e=err:
-                                    self.log(f"  查询异常 [{e['date']} {e['city']}]: {e['error']}", "ERROR"))
-
-                    if should_split_by_city and city_day_dfs:
-                        self.log(f"按日+按地市导出完成: 共导出 {len(city_day_dfs)} 个文件", "SUCCESS")
-
-                    if multi_day_per_sheet and all_dfs:
-                        day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                        self._export_multi_sheet(day_filename, all_dfs, table_name)
-                        self.log(f"按日分Sheet导出完成: {day_filename}", "SUCCESS")
-
-                    if not should_split_by_city and not multi_day_per_sheet and all_dfs:
-                        combined_df = pd.concat(all_dfs, ignore_index=True)
-                        day_filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                        combined_filepath = export_to_excel(combined_df, day_filename, table_name)
-                        if combined_filepath:
-                            self.log(f"按日查询导出完成: {os.path.basename(combined_filepath)} ({len(combined_df)} 条)", "SUCCESS")
-
-                    if not all_dfs and not city_day_dfs:
-                        self.log(f"查询结果为空: {table_name}", "WARNING")
-
-                else:
-                    # 普通模式：按日期范围查询（原有逻辑）
-                    conditions = table_config.get('default_conditions', []).copy()
-                    conditions.append({'field': 'starttime', 'operator': '>=', 'value': start_date})
-                    conditions.append({'field': 'starttime', 'operator': '<=', 'value': end_date})
-                    if city:
-                        conditions.append({'field': 'city', 'operator': 'in', 'value': city})
-
-                    payload = self.jxcx.build_payload_from_config(
-                        table_config['table_key'],
-                        table_config['fieldtype'],
-                        conditions,
-                        table_config['api_type'],
-                        dimension_override=dimension if dimension else None,
-                        fields_override=fields,
-                        table_name=table_config.get('table_name')
-                    )
-
-                    if payload:
-                        df = self.jxcx.get_table(payload, report_name=table_name)
-                        if not df.empty:
-                            self._apply_custom_fields(df, table_name)
-                            filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                            filepath = export_to_excel(df, filename, table_name)
-                            if filepath:
-                                self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-                            else:
-                                self.log(f"导出失败: {table_name}", "ERROR")
-                        else:
-                            self.log(f"查询结果为空: {table_name}", "WARNING")
-
-                self.log(f"查询完成: {table_name}", "SUCCESS")
-
-            self.root.after(0, self._on_query_complete)
-        except Exception as e:
-            self.root.after(0, lambda: self.log(f"查询异常: {e}", "ERROR"))
-            import traceback
-            traceback.print_exc()
-            self.root.after(0, self._on_query_failed)
+            self._query_worker_inst = worker
+        else:
+            worker.selected_fields = dict(getattr(self, 'selected_fields', {}))
+        return worker
 
     def _apply_custom_fields(self, df, table_name):
-        """应用自定义字段选择到 DataFrame"""
-        if self.custom_fields_var.get() and table_name in self.selected_fields:
-            selected_field_keys = self.selected_fields[table_name]
-            available_fields = [col for col in df.columns if col in selected_field_keys]
-            if not available_fields and table_name in self.field_configs:
-                config_map = {c.get('columnname'): c.get('columnname') for c in self.field_configs[table_name]}
-                for col in df.columns:
-                    if col in config_map and config_map[col] in selected_field_keys:
-                        available_fields.append(col)
-            if available_fields:
-                df = df[available_fields]
-                self.log(f"应用自定义字段: {len(available_fields)} 个字段", "INFO")
-            else:
-                self.log(f"没有选中的字段可用，将导出全部字段", "WARNING")
-        return df
+        """应用自定义字段选择（委托给 QueryWorker）"""
+        return self._get_query_worker().apply_custom_fields(df, table_name)
 
-    def _query_tables_parallel(self, table_names, start_date, end_date, city, config_source):
-        """单地市多表并行查询。"""
-        def _run_single_table(table_index, table_name):
-            try:
-                query = JXCXQuery(self.session)
-                query.enter_jxcx()
-                table_config = TableConfig.get_table_config(table_name)
-                if not table_config:
-                    return {"table": table_name, "error": f"未找到表配置: {table_name}"}
-
-                payload_func = table_config.get('payload_func')
-                yaml_conditions = table_config.get('conditions')
-                has_yaml_conditions = yaml_conditions and isinstance(yaml_conditions, dict) and yaml_conditions.get('where')
-                dimension = table_config.get('dimension', {})
-                field_mode = getattr(self, 'field_mode_var', None)
-                use_hardcode_fields = field_mode.get() == 'hardcode' if field_mode else True
-                fields = table_config.get('fields', None) if use_hardcode_fields else None
-                is_gongcan = table_config.get('is_gongcan', False)
-                is_4g_voice = table_config.get('is_4g_voice', False)
-
-                if is_4g_voice:
-                    return {"table": table_name, "error": "4G语音小区暂不支持单地市多表并行，请单独提取"}
-
-                if payload_func:
-                    payload_template = payload_func()
-                    if payload_template and payload_template.get('__gongcan__'):
-                        conditions = table_config.get('default_conditions', []).copy()
-                        if city:
-                            conditions.append({'field': 'city', 'operator': 'in', 'value': city})
-                        payload = query.build_payload_from_config(
-                            payload_template.get('table_key'),
-                            payload_template.get('fieldtype'),
-                            conditions,
-                            payload_template.get('api_type', 'table'),
-                            dimension_override={
-                                'geographicdimension': payload_template.get('geographicdimension', ''),
-                                'timedimension': payload_template.get('timedimension', ''),
-                                'enodebField': payload_template.get('enodebField', ''),
-                                'cgiField': payload_template.get('cgiField', ''),
-                                'timeField': payload_template.get('timeField', ''),
-                                'cellField': payload_template.get('cellField', ''),
-                                'cityField': payload_template.get('cityField', '')
-                            }
-                        )
-                    else:
-                        payload = payload_func(start_date, end_date, city)
-                elif has_yaml_conditions:
-                    payload = TableConfig.build_payload_from_yaml(table_name, start_date, end_date, city)
-                else:
-                    conditions = table_config.get('default_conditions', []).copy()
-                    conditions.append({'field': 'starttime', 'operator': '>=', 'value': start_date})
-                    conditions.append({'field': 'starttime', 'operator': '<=', 'value': end_date})
-                    if city:
-                        conditions.append({'field': 'city', 'operator': 'in', 'value': city})
-                    payload = query.build_payload_from_config(
-                        table_config['table_key'],
-                        table_config['fieldtype'],
-                        conditions,
-                        table_config['api_type'],
-                        dimension_override=dimension if dimension else None,
-                        fields_override=fields,
-                        table_name=table_config.get('table_name')
-                    )
-
-                if not payload:
-                    return {"table": table_name, "warning": "未生成查询条件"}
-
-                df = query.get_table(payload, report_name=table_name)
-                if df.empty:
-                    return {"table": table_name, "warning": "查询结果为空"}
-
-                calc_columns = table_config.get('calc_columns', [])
-                if calc_columns:
-                    if '4G全程完好率' in table_name:
-                        df = self._add_4g_wanchenglv_calc_columns(df)
-                    elif '5G全程完好率' in table_name:
-                        df = self._add_5g_wanchenglv_calc_columns(df)
-
-                df = self._apply_custom_fields(df, table_name)
-                filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                filepath = export_to_excel(df, filename, table_name)
-                return {
-                    "table": table_name,
-                    "filepath": filepath,
-                    "rows": len(df),
-                    "index": table_index,
-                }
-            except Exception as e:
-                return {"table": table_name, "error": str(e)}
-
-        completed = 0
-        with ThreadPoolExecutor(max_workers=min(6, len(table_names))) as executor:
-            futures = {
-                executor.submit(_run_single_table, table_index, table_name): (table_index, table_name)
-                for table_index, table_name in enumerate(table_names)
-            }
-            for future in as_completed(futures):
-                result = future.result()
-                completed += 1
-                self.root.after(0, lambda done=completed, total=len(table_names): self.update_progress(
-                    done, total, f"多线程提取 [{done}/{total}]"
-                ))
-
-                if result.get("error"):
-                    self.root.after(0, lambda msg=result["error"], table=result["table"]:
-                        self.log(f"{table}: {msg}", "ERROR"))
-                elif result.get("warning"):
-                    self.root.after(0, lambda msg=result["warning"], table=result["table"]:
-                        self.log(f"{table}: {msg}", "WARNING"))
-                elif result.get("filepath"):
-                    self.root.after(0, lambda path=result["filepath"], rows=result["rows"], table=result["table"]:
-                        self.log(f"{table}: {rows} 条数据 -> {os.path.basename(path)}", "SUCCESS"))
+    def _query_tables_parallel(self, table_names, start_date, end_date, city):
+        """单地市多表并行查询（委托给 QueryWorker）"""
+        self._get_query_worker().query_tables_parallel(table_names, start_date, end_date, city)
 
     def _export_multi_sheet(self, filename, sheets_data, default_sheet):
-        """导出多Sheet的Excel文件（快速模式）
-
-        Args:
-            filename: 文件名
-            sheets_data: list of (sheet_name, DataFrame) tuples
-            default_sheet: 默认工作表名称
-        """
-        ensure_dirs()
-        filepath = os.path.join(OUTPUT_DIR, filename)
-
-        try:
-            with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-                for sheet_name, df in sheets_data:
-                    df.to_excel(writer, sheet_name=str(sheet_name)[:31], index=False)
-            self.logger.info("多Sheet导出完成: %s (%d个Sheet)", filepath, len(sheets_data))
-        except Exception as e:
-            self.logger.error("多Sheet导出失败: %s", e)
+        """导出多Sheet的Excel文件（委托给 QueryWorker）"""
+        self._get_query_worker().export_multi_sheet(filename, sheets_data, default_sheet)
 
     def _query_4g_voice_table(self, table_config, start_date, end_date, city,
                                multi_day, multi_day_per_sheet, multi_day_per_city):
-        """查询4G语音小区报表（VoLTE + EPSFB 联合查询）
-
-        Args:
-            table_config: 表配置
-            start_date: 开始日期
-            end_date: 结束日期
-            city: 地市
-            multi_day: 是否按日查询
-            multi_day_per_sheet: 是否按日分Sheet
-            multi_day_per_city: 是否按日+按地市导出
-        """
-        from datetime import datetime, timedelta
-        import numpy as np
-
-        volte_fields = table_config.get('volte_fields', [])
-        epsfb_fields = table_config.get('epsfb_fields', [])
-
-        if not volte_fields or not epsfb_fields:
-            self.log(f"4G语音小区字段配置不完整，无法查询", "ERROR")
-            return
-
-        volte_dimension = table_config.get('dimension', {})
-        epsfb_dimension = {
-            'geographicdimension': '小区',
-            'timedimension': '天',
-            'enodebField': '---',
-            'cgiField': 'cgi',
-            'timeField': 'starttime',
-            'cellField': 'cell',
-            'cityField': 'city',
-        }
-
-        if multi_day:
-            current_date = datetime.strptime(start_date, '%Y-%m-%d')
-            end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
-            dates = []
-            while current_date <= end_datetime:
-                dates.append(current_date.strftime('%Y-%m-%d'))
-                current_date += timedelta(days=1)
-
-            total_days = len(dates)
-            selected_city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
-            should_split_by_city = multi_day_per_city and len(selected_city_list) >= 1
-            query_cities = selected_city_list if should_split_by_city else ([city] if city else [])
-
-            tasks = []
-            for query_date in dates:
-                for query_city in query_cities:
-                    tasks.append((query_date, query_city, query_city or '全部地市'))
-
-            total_tasks = len(tasks)
-            self.log(f"4G语音小区 - 按日查询模式: 共 {total_tasks} 个任务 ({total_days} 天 x {len(query_cities)} 地市)", "INFO")
-            if should_split_by_city:
-                self.log(f"4G语音小区 - 按日+按地市导出模式: 共 {len(query_cities)} 个地市", "INFO")
-
-            all_merged_dfs = []
-            city_day_dfs = []
-
-            def _query_4g_voice_task(task_data):
-                q_date, q_city, q_city_label = task_data
-                try:
-                    conditions = [
-                        {'field': 'starttime', 'operator': '>=', 'value': q_date},
-                        {'field': 'starttime', 'operator': '<=', 'value': q_date},
-                    ]
-                    if q_city:
-                        conditions.append({'field': 'city', 'operator': 'in', 'value': q_city})
-                    payloads = self.jxcx.build_4g_voice_payload(
-                        volte_fields, epsfb_fields, conditions,
-                        volte_dimension, epsfb_dimension
-                    )
-                    volte_payload = payloads['volte']
-                    epsfb_payload = payloads['epsfb']
-                    voice_data = self.jxcx.get_4g_voice_table(volte_payload, epsfb_payload)
-                    if voice_data.empty:
-                        return None, None
-                    merged_df = self._add_4g_voice_calc_columns(voice_data)
-                    return q_date, q_city_label, merged_df
-                except Exception as e:
-                    return None, {'date': q_date, 'city': q_city_label, 'error': str(e)}
-
-            completed_tasks = 0
-            with ThreadPoolExecutor(max_workers=min(8, total_tasks)) as executor:
-                futures = {executor.submit(_query_4g_voice_task, task): task for task in tasks}
-                for future in as_completed(futures):
-                    result = future.result()
-                    completed_tasks += 1
-                    self.root.after(0, lambda t=completed_tasks, tot=total_tasks:
-                        self.update_progress(t / tot, tot, f"查询4G语音小区 [{t}/{tot}]"))
-                    if result[0] is not None:
-                        q_date, q_city_label, merged_df = result
-                        if should_split_by_city:
-                            city_day_dfs.append((f"{q_date.replace('-', '')}_{q_city_label}", merged_df))
-                            filename = f"4G语音小区_{q_date}_{q_city_label}.xlsx"
-                            filepath = export_to_excel(merged_df, filename, "4G语音小区")
-                            if filepath:
-                                self.root.after(0, lambda fp, cnt, dt=q_date, cl=q_city_label:
-                                    self.log(f"  {dt} {cl}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
-                                    filepath, len(merged_df))
-                        elif multi_day_per_sheet:
-                            all_merged_dfs.append((q_date.replace('-', ''), merged_df))
-                        else:
-                            filename = f"4G语音小区_{q_date}.xlsx"
-                            filepath = export_to_excel(merged_df, filename, "4G语音小区")
-                            if filepath:
-                                self.root.after(0, lambda fp, cnt, dt=q_date:
-                                    self.log(f"  {dt}: {cnt} 条数据 -> {os.path.basename(fp)}", "SUCCESS"),
-                                    filepath, len(merged_df))
-                    elif result[1] is not None:
-                        err = result[1]
-                        self.root.after(0, lambda e=err:
-                            self.log(f"  查询异常 [{e['date']} {e['city']}]: {e['error']}", "ERROR"))
-
-            if should_split_by_city and city_day_dfs:
-                self.log(f"4G语音小区按日+按地市导出完成: 共导出 {len(city_day_dfs)} 个文件", "SUCCESS")
-
-            if multi_day_per_sheet and all_merged_dfs:
-                filename = f"4G语音小区_{start_date}_{end_date}.xlsx"
-                self._export_multi_sheet(filename, all_merged_dfs, "4G语音小区")
-                self.log(f"按日分Sheet导出完成: {filename}", "SUCCESS")
-
-        else:
-            conditions = [
-                {'field': 'starttime', 'operator': '>=', 'value': start_date},
-                {'field': 'starttime', 'operator': '<=', 'value': end_date},
-            ]
-            if city:
-                conditions.append({'field': 'city', 'operator': 'in', 'value': city})
-
-            self.log(f"4G语音小区: 查询 {start_date} 至 {end_date}", "INFO")
-
-            payloads = self.jxcx.build_4g_voice_payload(
-                volte_fields, epsfb_fields, conditions,
-                volte_dimension, epsfb_dimension
-            )
-            volte_payload = payloads['volte']
-            epsfb_payload = payloads['epsfb']
-
-            merged_df = self.jxcx.get_4g_voice_table(volte_payload, epsfb_payload)
-
-            if not merged_df.empty:
-                try:
-                    merged_df = self._add_4g_voice_calc_columns(merged_df)
-                except Exception as e:
-                    self.log(f"添加计算列异常: {e}", "WARNING")
-
-                filename = f"4G语音小区_{start_date}_{end_date}.xlsx"
-                filepath = export_to_excel(merged_df, filename, "4G语音小区")
-                if filepath:
-                    self.log(f"4G语音小区数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-            else:
-                self.log(f"4G语音小区查询结果为空", "WARNING")
-
-    def _add_4g_voice_calc_columns(self, df):
-        """添加4G语音小区计算列（预警报表版本）
-
-        计算规则：
-        - 4G语音通话质差时长比例 = (VoLTE语音上行吞字时长+VoLTE语音上行单通时长+VoLTE语音上行断续时长+EPSFB语音上行吞字时长+EPSFB语音上行单通时长+EPSFB语音上行断续时长) / (VoLTE语音上行总时长+EPSFB语音上行总时长)
-        - 4G差小区 = (VoLTE语音通话质差时长比例>2% 且 VoLTE通话次数>1000) 或者 (EPSFB语音通话质差时长比例>2% 且 EPSFB通话次数>1000)
-
-        Args:
-            df: 合并后的DataFrame
-
-        Returns:
-            DataFrame: 添加了计算列的DataFrame
-        """
-        import numpy as np
-
-        # 获取VoLTE和EPSFB的字段名（预警报表使用中文名）
-        volte_ul_tunzi = None
-        volte_ul_dantong = None
-        volte_ul_duanxu = None
-        volte_ul_sum = None
-        volte_call = None
-        epsfb_ul_tunzi = None
-        epsfb_ul_dantong = None
-        epsfb_ul_duanxu = None
-        epsfb_ul_sum = None
-        epsfb_call = None
-
-        for col in df.columns:
-            col_lower = col.lower()
-            # 预警报表的中文字段名
-            if 'volte' in col_lower and '上行' in col and '吞字' in col:
-                volte_ul_tunzi = col
-            elif 'volte' in col_lower and '上行' in col and '单通' in col:
-                volte_ul_dantong = col
-            elif 'volte' in col_lower and '上行' in col and '断续' in col:
-                volte_ul_duanxu = col
-            elif 'volte' in col_lower and '上行' in col and '总时长' in col:
-                volte_ul_sum = col
-            elif 'volte' in col_lower and ('通话次数' in col or '语音通话总次数' in col):
-                volte_call = col
-            elif 'epsfb' in col_lower and '上行' in col and '吞字' in col:
-                epsfb_ul_tunzi = col
-            elif 'epsfb' in col_lower and '上行' in col and '单通' in col:
-                epsfb_ul_dantong = col
-            elif 'epsfb' in col_lower and '上行' in col and '断续' in col:
-                epsfb_ul_duanxu = col
-            elif 'epsfb' in col_lower and '上行' in col and '总时长' in col:
-                epsfb_ul_sum = col
-            elif 'epsfb' in col_lower and ('通话次数' in col or '语音通话总次数' in col):
-                epsfb_call = col
-
-        # 如果没找到中文列名，尝试使用英文列名
-        if volte_ul_tunzi is None:
-            for col in df.columns:
-                if 'volte_ul_tunzi' in col.lower():
-                    volte_ul_tunzi = col
-                    break
-        if volte_ul_dantong is None:
-            for col in df.columns:
-                if 'volte_ul_dantong' in col.lower():
-                    volte_ul_dantong = col
-                    break
-        if volte_ul_duanxu is None:
-            for col in df.columns:
-                if 'volte_ul_duanxu' in col.lower():
-                    volte_ul_duanxu = col
-                    break
-        if volte_ul_sum is None:
-            for col in df.columns:
-                if 'volte_ul_voice_sum' in col.lower():
-                    volte_ul_sum = col
-                    break
-        if volte_call is None:
-            for col in df.columns:
-                if 'volte_ans_voice' in col.lower():
-                    volte_call = col
-                    break
-        if epsfb_ul_tunzi is None:
-            for col in df.columns:
-                if 'epsfb_ul_tunzi' in col.lower():
-                    epsfb_ul_tunzi = col
-                    break
-        if epsfb_ul_dantong is None:
-            for col in df.columns:
-                if 'epsfb_ul_dantong' in col.lower():
-                    epsfb_ul_dantong = col
-                    break
-        if epsfb_ul_duanxu is None:
-            for col in df.columns:
-                if 'epsfb_ul_duanxu' in col.lower():
-                    epsfb_ul_duanxu = col
-                    break
-        if epsfb_ul_sum is None:
-            for col in df.columns:
-                if 'epsfb_ul_voice_sum' in col.lower():
-                    epsfb_ul_sum = col
-                    break
-        if epsfb_call is None:
-            for col in df.columns:
-                if 'epsfb_ans_voice' in col.lower():
-                    epsfb_call = col
-                    break
-
-        # 记录找到的字段
-        found_fields = []
-        missing_fields = []
-        if volte_ul_tunzi:
-            found_fields.append(f"VoLTE上行吞字={volte_ul_tunzi[:20]}...")
-        else:
-            missing_fields.append("VoLTE上行吞字")
-        if volte_ul_dantong:
-            found_fields.append(f"VoLTE上行单通={volte_ul_dantong[:20]}...")
-        else:
-            missing_fields.append("VoLTE上行单通")
-        if volte_ul_duanxu:
-            found_fields.append(f"VoLTE上行断续={volte_ul_duanxu[:20]}...")
-        else:
-            missing_fields.append("VoLTE上行断续")
-        if volte_ul_sum:
-            found_fields.append(f"VoLTE上行总时长={volte_ul_sum[:20]}...")
-        else:
-            missing_fields.append("VoLTE上行总时长")
-        if volte_call:
-            found_fields.append(f"VoLTE通话次数={volte_call[:20]}...")
-        else:
-            missing_fields.append("VoLTE通话次数")
-        if epsfb_ul_tunzi:
-            found_fields.append(f"EPSFB上行吞字={epsfb_ul_tunzi[:20]}...")
-        else:
-            missing_fields.append("EPSFB上行吞字")
-        if epsfb_ul_dantong:
-            found_fields.append(f"EPSFB上行单通={epsfb_ul_dantong[:20]}...")
-        else:
-            missing_fields.append("EPSFB上行单通")
-        if epsfb_ul_duanxu:
-            found_fields.append(f"EPSFB上行断续={epsfb_ul_duanxu[:20]}...")
-        else:
-            missing_fields.append("EPSFB上行断续")
-        if epsfb_ul_sum:
-            found_fields.append(f"EPSFB上行总时长={epsfb_ul_sum[:20]}...")
-        else:
-            missing_fields.append("EPSFB上行总时长")
-        if epsfb_call:
-            found_fields.append(f"EPSFB通话次数={epsfb_call[:20]}...")
-        else:
-            missing_fields.append("EPSFB通话次数")
-
-        self.log(f"[4G语音计算] 找到字段: {len(found_fields)}, 缺失: {len(missing_fields)}", "INFO")
-        if missing_fields:
-            self.log(f"[4G语音计算] 缺失字段: {missing_fields}", "WARNING")
-
-        # 计算4G语音通话质差时长比例
-        # = (VoLTE语音上行吞字时长+VoLTE语音上行单通时长+VoLTE语音上行断续时长+EPSFB语音上行吞字时长+EPSFB语音上行单通时长+EPSFB语音上行断续时长)
-        #   / (VoLTE语音上行总时长+EPSFB语音上行总时长)
-        if all(v is not None for v in [volte_ul_tunzi, volte_ul_dantong, volte_ul_duanxu,
-                                         volte_ul_sum, epsfb_ul_tunzi, epsfb_ul_dantong,
-                                         epsfb_ul_duanxu, epsfb_ul_sum]):
-            total_bad = (df[volte_ul_tunzi].fillna(0) + df[volte_ul_dantong].fillna(0) +
-                         df[volte_ul_duanxu].fillna(0) + df[epsfb_ul_tunzi].fillna(0) +
-                         df[epsfb_ul_dantong].fillna(0) + df[epsfb_ul_duanxu].fillna(0))
-            total_sum = df[volte_ul_sum].fillna(0) + df[epsfb_ul_sum].fillna(0)
-            df['4G语音通话质差时长比例'] = np.where(total_sum > 0, (total_bad / total_sum * 100).round(4), np.nan)
-            self.log(f"[4G语音计算] 4G语音通话质差时长比例计算完成", "SUCCESS")
-        else:
-            self.log(f"[4G语音计算] 缺少必要字段，无法计算4G语音通话质差时长比例", "WARNING")
-
-        # 计算4G语音差小区判定
-        # 条件：(VoLTE语音通话质差时长比例>2%且VoLTE通话次数>1000)
-        # 或者 (EPSFB语音通话质差时长比例>2%且EPSFB通话次数>1000)
-        volte_bad_rate = None
-        epsfb_bad_rate = None
-
-        if volte_ul_sum and volte_ul_tunzi and volte_ul_dantong and volte_ul_duanxu:
-            volte_total_bad = df[volte_ul_tunzi].fillna(0) + df[volte_ul_dantong].fillna(0) + df[volte_ul_duanxu].fillna(0)
-            volte_total = df[volte_ul_sum].fillna(0)
-            volte_bad_rate = np.where(volte_total > 0, volte_total_bad / volte_total * 100, 0)
-
-        if epsfb_ul_sum and epsfb_ul_tunzi and epsfb_ul_dantong and epsfb_ul_duanxu:
-            epsfb_total_bad = df[epsfb_ul_tunzi].fillna(0) + df[epsfb_ul_dantong].fillna(0) + df[epsfb_ul_duanxu].fillna(0)
-            epsfb_total = df[epsfb_ul_sum].fillna(0)
-            epsfb_bad_rate = np.where(epsfb_total > 0, epsfb_total_bad / epsfb_total * 100, 0)
-
-        if volte_bad_rate is not None and volte_call is not None:
-            volte_is_bad = (volte_bad_rate > 2) & (df[volte_call].fillna(0) > 1000)
-            bad_volte_count = volte_is_bad.sum()
-            self.log(f"[4G语音计算] VoLTE差小区数量: {bad_volte_count}", "INFO")
-        else:
-            volte_is_bad = np.full(len(df), False, dtype=bool)
-            self.log(f"[4G语音计算] 无法计算VoLTE差小区（缺少字段）", "WARNING")
-
-        if epsfb_bad_rate is not None and epsfb_call is not None:
-            epsfb_is_bad = (epsfb_bad_rate > 2) & (df[epsfb_call].fillna(0) > 1000)
-            bad_epsfb_count = epsfb_is_bad.sum()
-            self.log(f"[4G语音计算] EPSFB差小区数量: {bad_epsfb_count}", "INFO")
-        else:
-            epsfb_is_bad = np.full(len(df), False, dtype=bool)
-            self.log(f"[4G语音计算] 无法计算EPSFB差小区（缺少字段）", "WARNING")
-
-        df['4G语音差小区'] = np.where(volte_is_bad | epsfb_is_bad, '是', '否')
-        bad_cell_count = (df['4G语音差小区'] == '是').sum()
-        self.log(f"[4G语音计算] 4G语音差小区总计: {bad_cell_count}", "SUCCESS")
-
-        return df
-
-    def _add_4g_wanchenglv_calc_columns(self, df):
-        """添加4G全程完好率计算列
-
-        计算规则：
-        - 4G无线接通率(%) = (RRC连接建立成功次数/RRC连接建立请求次数) * (E-RAB建立成功数/E-RAB建立请求数)
-        - 4G切换成功率(%) = 切换成功次数/切换请求次数
-        - 4G E-RAB掉线率 = (切出失败的E-RAB数 - 正常的eNB请求释放的E-RAB数 + eNB请求释放的E-RAB数)
-                           / (遗留上下文个数 + E-RAB建立成功数 + 切换入E-RAB数)
-        - 4G全程完好率 = 4G无线接通率(%) * 4G切换成功率(%) * (100 - 4G E-RAB掉线率)
-        - 4G是否差小区 = 全程完好率 < 85% 时为"是"，否则为"否"
-
-        Args:
-            df: 4G全程完好率报表的DataFrame
-
-        Returns:
-            DataFrame: 添加了计算列的DataFrame
-        """
-        import numpy as np
-
-        # 字段名映射（英文 -> 中文/通用名）
-        field_map = {}
-        for col in df.columns:
-            col_lower = col.lower() if isinstance(col, str) else ''
-            # RRC连接建立成功次数
-            if col_lower in ('succconnestab', 'rrc连接建立成功次数'):
-                field_map['rrc_succ'] = col
-            # RRC连接建立请求次数
-            elif col_lower in ('attconnestab', 'rrc连接建立请求次数'):
-                field_map['rrc_att'] = col
-            # E-RAB建立成功数
-            elif col_lower in ('nbrsuccestab', 'e-rab建立成功数'):
-                field_map['erab_succ'] = col
-            # E-RAB建立请求数
-            elif col_lower in ('nbrattestab', 'e-rab建立请求数'):
-                field_map['erab_att'] = col
-            # 切换成功次数
-            elif col_lower in ('ho_succ_out', '切换成功次数'):
-                field_map['ho_succ'] = col
-            # 切换请求次数
-            elif col_lower in ('ho_att__out', '切换请求次数'):
-                field_map['ho_att'] = col
-            # 切出失败的E-RAB数
-            elif col_lower in ('hofail', '切出失败的e-rab数'):
-                field_map['ho_fail'] = col
-            # 正常的eNB请求释放的E-RAB数
-            elif col_lower in ('nbrreqrelenb_normal', '正常的enb请求释放的e-rab数'):
-                field_map['erab_normal_rel'] = col
-            # eNB请求释放的E-RAB数
-            elif col_lower in ('nbrreqrelenb', 'enb请求释放的e-rab数'):
-                field_map['erab_rel'] = col
-            # 遗留上下文个数
-            elif col_lower in ('nbrleft', '遗留上下文个数'):
-                field_map['context_left'] = col
-            # 切换入E-RAB数
-            elif col_lower in ('nbrhoinc', '切换入e-rab数'):
-                field_map['ho_inc'] = col
-
-        self.log(f"[4G全程完好率] 字段映射: {list(field_map.keys())}", "INFO")
-
-        # ========== 1. 计算4G无线接通率(%) ==========
-        if 'rrc_succ' in field_map and 'rrc_att' in field_map and 'erab_succ' in field_map and 'erab_att' in field_map:
-            rrc_succ = df[field_map['rrc_succ']].fillna(0).astype(float)
-            rrc_att = df[field_map['rrc_att']].fillna(0).astype(float)
-            erab_succ = df[field_map['erab_succ']].fillna(0).astype(float)
-            erab_att = df[field_map['erab_att']].fillna(0).astype(float)
-
-            rrc_rate = np.where(rrc_att > 0, rrc_succ / rrc_att * 100, np.nan)
-            erab_rate = np.where(erab_att > 0, erab_succ / erab_att * 100, np.nan)
-            df['4G无线接通率(%)'] = np.where(
-                (rrc_att > 0) & (erab_att > 0),
-                rrc_rate * erab_rate,
-                np.nan
-            )
-            df['4G无线接通率(%)'] = df['4G无线接通率(%)'].round(4)
-            valid_count = df['4G无线接通率(%)'].notna().sum()
-            self.log(f"[4G全程完好率] 4G无线接通率计算完成, 有效数据: {valid_count}", "SUCCESS")
-        else:
-            missing = [k for k in ['rrc_succ', 'rrc_att', 'erab_succ', 'erab_att'] if k not in field_map]
-            self.log(f"[4G全程完好率] 缺少字段无法计算4G无线接通率: {missing}", "WARNING")
-
-        # ========== 2. 计算4G切换成功率(%) ==========
-        if 'ho_succ' in field_map and 'ho_att' in field_map:
-            ho_succ = df[field_map['ho_succ']].fillna(0).astype(float)
-            ho_att = df[field_map['ho_att']].fillna(0).astype(float)
-            df['4G切换成功率(%)'] = np.where(ho_att > 0, ho_succ / ho_att * 100, np.nan)
-            df['4G切换成功率(%)'] = df['4G切换成功率(%)'].round(4)
-            valid_count = df['4G切换成功率(%)'].notna().sum()
-            self.log(f"[4G全程完好率] 4G切换成功率计算完成, 有效数据: {valid_count}", "SUCCESS")
-        else:
-            missing = [k for k in ['ho_succ', 'ho_att'] if k not in field_map]
-            self.log(f"[4G全程完好率] 缺少字段无法计算4G切换成功率: {missing}", "WARNING")
-
-        # ========== 3. 计算4G E-RAB掉线率 ==========
-        if all(k in field_map for k in ['ho_fail', 'erab_normal_rel', 'erab_rel', 'context_left', 'erab_succ', 'ho_inc']):
-            ho_fail = df[field_map['ho_fail']].fillna(0).astype(float)
-            erab_normal_rel = df[field_map['erab_normal_rel']].fillna(0).astype(float)
-            erab_rel = df[field_map['erab_rel']].fillna(0).astype(float)
-            context_left = df[field_map['context_left']].fillna(0).astype(float)
-            erab_succ = df[field_map['erab_succ']].fillna(0).astype(float)
-            ho_inc = df[field_map['ho_inc']].fillna(0).astype(float)
-
-            numerator = ho_fail - erab_normal_rel + erab_rel
-            denominator = context_left + erab_succ + ho_inc
-            df['4G_E-RAB掉线率(%)'] = np.where(denominator > 0, numerator / denominator * 100, np.nan)
-            df['4G_E-RAB掉线率(%)'] = df['4G_E-RAB掉线率(%)'].round(4)
-            valid_count = df['4G_E-RAB掉线率(%)'].notna().sum()
-            self.log(f"[4G全程完好率] 4G E-RAB掉线率计算完成, 有效数据: {valid_count}", "SUCCESS")
-        else:
-            missing = [k for k in ['ho_fail', 'erab_normal_rel', 'erab_rel', 'context_left', 'erab_succ', 'ho_inc'] if k not in field_map]
-            self.log(f"[4G全程完好率] 缺少字段无法计算4G E-RAB掉线率: {missing}", "WARNING")
-
-        # ========== 4. 计算4G全程完好率 ==========
-        if '4G无线接通率(%)' in df.columns and '4G切换成功率(%)' in df.columns and '4G_E-RAB掉线率(%)' in df.columns:
-            df['4G全程完好率(%)'] = (
-                df['4G无线接通率(%)'] *
-                df['4G切换成功率(%)'] *
-                (100 - df['4G_E-RAB掉线率(%)'])
-            ).round(4)
-            valid_count = df['4G全程完好率(%)'].notna().sum()
-            self.log(f"[4G全程完好率] 4G全程完好率计算完成, 有效数据: {valid_count}", "SUCCESS")
-        else:
-            self.log(f"[4G全程完好率] 无法计算4G全程完好率(缺少前置指标)", "WARNING")
-
-        # ========== 5. 判断4G是否差小区 ==========
-        if '4G全程完好率(%)' in df.columns:
-            df['4G是否差小区'] = np.where(df['4G全程完好率(%)'] < 85, '是', '否')
-            bad_count = (df['4G是否差小区'] == '是').sum()
-            self.log(f"[4G全程完好率] 4G是否差小区计算完成, 差小区数量: {bad_count}", "SUCCESS")
-
-        return df
-
-    def _add_5g_wanchenglv_calc_columns(self, df):
-        """添加5G全程完好率计算列
-
-        计算规则：
-        - SA无线接通率% = (RRC连接建立成功次数/RRC连接建立请求次数)
-                        * (Flow建立成功数/Flow建立请求数)
-                        * (NG接口UE相关逻辑信令连接建立成功次数/NG接口UE相关逻辑信令连接建立请求次数)
-        - SA无线掉线率% = (gNB请求释放上下文数 - 正常的gNB请求释放上下文数)
-                       / (初始上下文建立成功次数 + 遗留上下文个数 + 切换入成功次数 + RRC连接重建成功次数(非源侧小区))
-        - SA切换成功率% = (gNB间NG切换出成功次数 + gNB间Xn切换出成功次数 + CU内DU间切换出执行成功次数 + CU内DU内切换出成功次数)
-                        / (gNB间NG切换出准备请求次数 + gNB间Xn切换出准备请求次数 + CU内DU间切换出执行请求次数 + CU内DU内切换出执行请求次数)
-        - 5G全程完好率 = SA无线接通率% * SA切换成功率% * (100 - SA无线掉线率%)
-        - 5G是否差小区 = 全程完好率 < 85% 时为"是"，否则为"否"
-
-        Args:
-            df: 5G全程完好率报表的DataFrame
-
-        Returns:
-            DataFrame: 添加了计算列的DataFrame
-        """
-        import numpy as np
-
-        # 字段名映射（英文 -> 通用名）
-        field_map = {}
-        for col in df.columns:
-            col_lower = col.lower() if isinstance(col, str) else ''
-            # RRC连接建立成功次数
-            if col_lower in ('rrc_succconnestab', 'rrc连接建立成功次数'):
-                field_map['rrc_succ'] = col
-            # RRC连接建立请求次数
-            elif col_lower in ('rrc_attconnestab', 'rrc连接建立请求次数'):
-                field_map['rrc_att'] = col
-            # Flow建立成功数
-            elif col_lower in ('flow_nbrsuccestab', 'flow建立成功数'):
-                field_map['flow_succ'] = col
-            # Flow建立请求数
-            elif col_lower in ('flow_nbrattestab', 'flow建立请求数'):
-                field_map['flow_att'] = col
-            # NG接口UE相关逻辑信令连接建立成功次数
-            elif col_lower in ('ngsig_connestabsucc', 'ng接口ue相关逻辑信令连接建立成功次数'):
-                field_map['ngsig_succ'] = col
-            # NG接口UE相关逻辑信令连接建立请求次数
-            elif col_lower in ('ngsig_connestabatt', 'ng接口ue相关逻辑信令连接建立请求次数'):
-                field_map['ngsig_att'] = col
-            # gNB请求释放上下文数
-            elif col_lower in ('context_attrelgnb', 'gnb请求释放上下文数'):
-                field_map['context_rel'] = col
-            # 正常的gNB请求释放上下文数
-            elif col_lower in ('context_attrelgnb_normal', '正常的gnb请求释放上下文数'):
-                field_map['context_rel_normal'] = col
-            # 初始上下文建立成功次数
-            elif col_lower in ('context_succinitalsetup', '初始上下文建立成功次数'):
-                field_map['context_init_succ'] = col
-            # 遗留上下文个数
-            elif col_lower in ('context_nbrleft', '遗留上下文个数'):
-                field_map['context_left'] = col
-            # 切换入成功次数
-            elif col_lower in ('ho_succexecinc', '切换入成功次数'):
-                field_map['ho_inc_succ'] = col
-            # RRC连接重建成功次数(非源侧小区)
-            elif col_lower in ('rrc_succconnreestab_nonsrccell', 'rrc连接重建成功次数(非源侧小区)'):
-                field_map['rrc_reestab_succ'] = col
-            # gNB间NG切换出成功次数
-            elif col_lower in ('ho_succoutintercung', 'gnb间ng切换出成功次数'):
-                field_map['ho_ng_succ'] = col
-            # gNB间Xn切换出成功次数
-            elif col_lower in ('ho_succoutintercuxn', 'gnb间xn切换出成功次数'):
-                field_map['ho_xn_succ'] = col
-            # CU内DU间切换出执行成功次数
-            elif col_lower in ('ho_succoutintracuinterdu', 'cu内du间切换出执行成功次数'):
-                field_map['ho_cu_du_succ'] = col
-            # CU内DU内切换出成功次数
-            elif col_lower in ('ho_succoutintradu', 'cu内du内切换出成功次数'):
-                field_map['ho_cu_intra_succ'] = col
-            # gNB间NG切换出准备请求次数
-            elif col_lower in ('ho_attoutintercung', 'gnb间ng切换出准备请求次数'):
-                field_map['ho_ng_att'] = col
-            # gNB间Xn切换出准备请求次数
-            elif col_lower in ('ho_attoutintercuxn', 'gnb间xn切换出准备请求次数'):
-                field_map['ho_xn_att'] = col
-            # CU内DU间切换出执行请求次数
-            elif col_lower in ('ho_attoutintracuinterdu', 'cu内du间切换出执行请求次数'):
-                field_map['ho_cu_du_att'] = col
-            # CU内DU内切换出执行请求次数
-            elif col_lower in ('ho_attoutcuintradu', 'cu内du内切换出执行请求次数'):
-                field_map['ho_cu_intra_att'] = col
-
-        self.log(f"[5G全程完好率] 字段映射: {list(field_map.keys())}", "INFO")
-
-        # ========== 1. 计算SA无线接通率% ==========
-        rrc_ok = all(k in field_map for k in ['rrc_succ', 'rrc_att'])
-        flow_ok = all(k in field_map for k in ['flow_succ', 'flow_att'])
-        ngsig_ok = all(k in field_map for k in ['ngsig_succ', 'ngsig_att'])
-
-        if rrc_ok and flow_ok and ngsig_ok:
-            rrc_succ = df[field_map['rrc_succ']].fillna(0).astype(float)
-            rrc_att = df[field_map['rrc_att']].fillna(0).astype(float)
-            flow_succ = df[field_map['flow_succ']].fillna(0).astype(float)
-            flow_att = df[field_map['flow_att']].fillna(0).astype(float)
-            ngsig_succ = df[field_map['ngsig_succ']].fillna(0).astype(float)
-            ngsig_att = df[field_map['ngsig_att']].fillna(0).astype(float)
-
-            rrc_rate = np.where(rrc_att > 0, rrc_succ / rrc_att, 0)
-            flow_rate = np.where(flow_att > 0, flow_succ / flow_att, 0)
-            ngsig_rate = np.where(ngsig_att > 0, ngsig_succ / ngsig_att, 0)
-
-            df['SA无线接通率(%)'] = np.where(
-                (rrc_att > 0) & (flow_att > 0) & (ngsig_att > 0),
-                rrc_rate * flow_rate * ngsig_rate * 100,
-                np.nan
-            )
-            df['SA无线接通率(%)'] = df['SA无线接通率(%)'].round(4)
-            valid_count = df['SA无线接通率(%)'].notna().sum()
-            self.log(f"[5G全程完好率] SA无线接通率计算完成, 有效数据: {valid_count}", "SUCCESS")
-        else:
-            missing = []
-            if not rrc_ok:
-                missing.extend([k for k in ['rrc_succ', 'rrc_att'] if k not in field_map])
-            if not flow_ok:
-                missing.extend([k for k in ['flow_succ', 'flow_att'] if k not in field_map])
-            if not ngsig_ok:
-                missing.extend([k for k in ['ngsig_succ', 'ngsig_att'] if k not in field_map])
-            self.log(f"[5G全程完好率] 缺少字段无法计算SA无线接通率: {missing}", "WARNING")
-
-        # ========== 2. 计算SA无线掉线率% ==========
-        drop_ok = all(k in field_map for k in ['context_rel', 'context_rel_normal', 'context_init_succ',
-                                                  'context_left', 'ho_inc_succ', 'rrc_reestab_succ'])
-        if drop_ok:
-            context_rel = df[field_map['context_rel']].fillna(0).astype(float)
-            context_rel_normal = df[field_map['context_rel_normal']].fillna(0).astype(float)
-            context_init_succ = df[field_map['context_init_succ']].fillna(0).astype(float)
-            context_left = df[field_map['context_left']].fillna(0).astype(float)
-            ho_inc_succ = df[field_map['ho_inc_succ']].fillna(0).astype(float)
-            rrc_reestab_succ = df[field_map['rrc_reestab_succ']].fillna(0).astype(float)
-
-            numerator = context_rel - context_rel_normal
-            denominator = context_init_succ + context_left + ho_inc_succ + rrc_reestab_succ
-
-            df['SA无线掉线率(%)'] = np.where(denominator > 0, numerator / denominator * 100, np.nan)
-            df['SA无线掉线率(%)'] = df['SA无线掉线率(%)'].round(4)
-            valid_count = df['SA无线掉线率(%)'].notna().sum()
-            self.log(f"[5G全程完好率] SA无线掉线率计算完成, 有效数据: {valid_count}", "SUCCESS")
-        else:
-            missing = [k for k in ['context_rel', 'context_rel_normal', 'context_init_succ',
-                                    'context_left', 'ho_inc_succ', 'rrc_reestab_succ'] if k not in field_map]
-            self.log(f"[5G全程完好率] 缺少字段无法计算SA无线掉线率: {missing}", "WARNING")
-
-        # ========== 3. 计算SA切换成功率% ==========
-        ho_succ_ok = all(k in field_map for k in ['ho_ng_succ', 'ho_xn_succ', 'ho_cu_du_succ', 'ho_cu_intra_succ'])
-        ho_att_ok = all(k in field_map for k in ['ho_ng_att', 'ho_xn_att', 'ho_cu_du_att', 'ho_cu_intra_att'])
-
-        if ho_succ_ok and ho_att_ok:
-            ho_ng_succ = df[field_map['ho_ng_succ']].fillna(0).astype(float)
-            ho_xn_succ = df[field_map['ho_xn_succ']].fillna(0).astype(float)
-            ho_cu_du_succ = df[field_map['ho_cu_du_succ']].fillna(0).astype(float)
-            ho_cu_intra_succ = df[field_map['ho_cu_intra_succ']].fillna(0).astype(float)
-            ho_ng_att = df[field_map['ho_ng_att']].fillna(0).astype(float)
-            ho_xn_att = df[field_map['ho_xn_att']].fillna(0).astype(float)
-            ho_cu_du_att = df[field_map['ho_cu_du_att']].fillna(0).astype(float)
-            ho_cu_intra_att = df[field_map['ho_cu_intra_att']].fillna(0).astype(float)
-
-            succ_total = ho_ng_succ + ho_xn_succ + ho_cu_du_succ + ho_cu_intra_succ
-            att_total = ho_ng_att + ho_xn_att + ho_cu_du_att + ho_cu_intra_att
-
-            df['SA切换成功率(%)'] = np.where(att_total > 0, succ_total / att_total * 100, np.nan)
-            df['SA切换成功率(%)'] = df['SA切换成功率(%)'].round(4)
-            valid_count = df['SA切换成功率(%)'].notna().sum()
-            self.log(f"[5G全程完好率] SA切换成功率计算完成, 有效数据: {valid_count}", "SUCCESS")
-        else:
-            missing = []
-            if not ho_succ_ok:
-                missing.extend([k for k in ['ho_ng_succ', 'ho_xn_succ', 'ho_cu_du_succ', 'ho_cu_intra_succ'] if k not in field_map])
-            if not ho_att_ok:
-                missing.extend([k for k in ['ho_ng_att', 'ho_xn_att', 'ho_cu_du_att', 'ho_cu_intra_att'] if k not in field_map])
-            self.log(f"[5G全程完好率] 缺少字段无法计算SA切换成功率: {missing}", "WARNING")
-
-        # ========== 4. 计算5G全程完好率 ==========
-        if 'SA无线接通率(%)' in df.columns and 'SA切换成功率(%)' in df.columns and 'SA无线掉线率(%)' in df.columns:
-            df['5G全程完好率(%)'] = (
-                df['SA无线接通率(%)'] *
-                df['SA切换成功率(%)'] *
-                (100 - df['SA无线掉线率(%)'])
-            ).round(4)
-            valid_count = df['5G全程完好率(%)'].notna().sum()
-            self.log(f"[5G全程完好率] 5G全程完好率计算完成, 有效数据: {valid_count}", "SUCCESS")
-        else:
-            self.log(f"[5G全程完好率] 无法计算5G全程完好率(缺少前置指标)", "WARNING")
-
-        # ========== 5. 判断5G是否差小区 ==========
-        if '5G全程完好率(%)' in df.columns:
-            df['5G是否差小区'] = np.where(df['5G全程完好率(%)'] < 85, '是', '否')
-            bad_count = (df['5G是否差小区'] == '是').sum()
-            self.log(f"[5G全程完好率] 5G是否差小区计算完成, 差小区数量: {bad_count}", "SUCCESS")
-
-        return df
+        """查询4G语音小区报表（委托给 QueryWorker）"""
+        self._get_query_worker().query_4g_voice_table(
+            table_config, start_date, end_date, city,
+            multi_day, multi_day_per_sheet, multi_day_per_city
+        )
 
     def _on_query_complete(self):
         """查询完成回调"""
@@ -2651,8 +1444,28 @@ F1        - 显示此帮助
         self.reset_progress()
 
     def log(self, message, level="INFO"):
-        """输出日志"""
-        self.log_text.config(state='normal')
+        """输出日志（线程安全，非主线程时自动通过 root.after 调度）"""
+        # 检查是否在主线程中
+        try:
+            is_main = threading.current_thread() is threading.main_thread()
+        except AttributeError:
+            is_main = True
+
+        if not is_main:
+            # 非主线程：通过 root.after 调度到主线程执行
+            self.root.after(0, self._do_log, message, level)
+            return
+
+        self._do_log(message, level)
+
+    def _do_log(self, message, level="INFO"):
+        """实际的日志写入操作（必须在主线程中调用）"""
+        # 防御性检查：组件未创建时跳过（如 __init__ 早期调用 log()）
+        log_text = getattr(self, 'log_text', None)
+        if log_text is None or not log_text.winfo_exists():
+            return
+
+        log_text.config(state='normal')
 
         tag_map = {
             'INFO': 'INFO',
@@ -2664,19 +1477,16 @@ F1        - 显示此帮助
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_line = f"[{timestamp}] {message}\n"
 
-        self.log_text.insert(tk.END, log_line, (tag_map.get(level, 'INFO'),))
-        self.log_text.see(tk.END)
-        self.log_text.config(state='disabled')
+        log_text.insert(tk.END, log_line, (tag_map.get(level, 'INFO'),))
+        log_text.see(tk.END)
+        log_text.config(state='disabled')
 
     def load_config(self):
         """加载配置"""
+        # 配置来源已固定为硬编码模式（YAML配置已禁用）
         self.log("NQI工具已就绪", "INFO")
         self.log(f"支持的数据表: {', '.join(TableConfig.get_table_names())}", "INFO")
-        # 显示配置来源统计
-        yaml_count = len(TableConfig._get_yaml_loader().get_all_names())
-        old_count = len(TableConfig.TABLE_CONFIGS)
-        self.log(f"配置来源统计: YAML配置 {yaml_count} 个, 旧代码 {old_count} 个", "INFO")
-        self.log("提示: 可通过'配置来源'切换按钮验证YAML改造是否成功", "INFO")
+        self.log(f"配置共 {len(TableConfig.TABLE_CONFIGS)} 个表格（全部使用硬编码配置）", "INFO")
 
     def run(self):
         """运行应用"""

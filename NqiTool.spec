@@ -14,8 +14,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('table_configs', 'table_configs'),
-        ('custom_configs', 'custom_configs'),
+        # 字段配置数据文件（从 field_configs.json 加载，修改无需改代码）
+        ('gui/field_configs.json', 'gui'),
     ],
     hiddenimports=[
         # 项目内部模块 - utils
@@ -27,10 +27,16 @@ a = Analysis(
         'utils.excel_styler',
         'utils.retry',
         # 项目内部模块 - core
-        'core.license',
         'core.auth',
         'core.query',
         'core.export',
+        'core.common',
+        'core.session_mixin',
+        'core.payload_builder_mixin',
+        'core.data_fetcher_mixin',
+        'core.voice_merger_mixin',
+        'core.flow_table_builder',
+        'core.workers',
         # 项目内部模块 - gui
         'gui.widgets',
         'gui.login_dialog',
@@ -40,11 +46,14 @@ a = Analysis(
         'gui.payload_templates',
         'gui.theme',
         'gui.first_run',
-        'gui.table_config_loader',
+        'gui.calculators',
+        'gui.calculators.voice_calc',
+        'gui.calculators.wanchenglv_calc',
         # 第三方库
         'requests',
         'pandas',
         'openpyxl',
+        'xlsxwriter',
         'lxml',
         'yaml',
         'PIL',

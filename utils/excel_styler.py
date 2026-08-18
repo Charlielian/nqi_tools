@@ -6,6 +6,28 @@ Excel样式管理器
 
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import math
+import numbers
+import pandas as pd
+
+
+def normalize_excel_value(value):
+    """将 Excel writer 不支持的缺失或非有限值转换为空单元格。"""
+    try:
+        missing = pd.isna(value)
+        if isinstance(missing, bool) and missing:
+            return None
+        if hasattr(missing, 'item') and missing.ndim == 0 and bool(missing.item()):
+            return None
+        if isinstance(value, numbers.Number) and not isinstance(value, bool) and not math.isfinite(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def normalize_excel_rows(rows):
+    return [[normalize_excel_value(value) for value in row] for row in rows]
 
 
 class ExcelStyler:
@@ -109,17 +131,15 @@ class ExcelStyler:
 
     @classmethod
     def auto_adjust_column_width(cls, worksheet, max_width=50, min_width=8):
-        """自动调整列宽（优化版）
+        """自动调整列宽（openpyxl版）
 
         Args:
             worksheet: openpyxl Worksheet对象
             max_width: 最大列宽
             min_width: 最小列宽
         """
-        # 优化：预先计算列宽，避免逐个cell遍历
         for column in worksheet.columns:
             column_letter = get_column_letter(column[0].column)
-            # 使用列表推导式收集所有值的长度
             try:
                 lengths = [len(str(cell.value)) for cell in column if cell.value is not None]
                 max_length = max(lengths) if lengths else 8
@@ -132,7 +152,7 @@ class ExcelStyler:
     @classmethod
     def format_worksheet(cls, worksheet, header_style='header_blue',
                          auto_width=True, max_col_width=50):
-        """格式化工作表（优化版）
+        """格式化工作表（openpyxl版）
 
         Args:
             worksheet: openpyxl Worksheet对象
@@ -151,7 +171,7 @@ class ExcelStyler:
             cell.alignment = header_align
             cell.border = header_border
 
-        # 优化：使用 iter_rows 批量处理数据行（比逐行迭代更快）
+        # 优化：使用 iter_rows 批量处理数据行
         if auto_width:
             # 预收集每列的最大长度
             col_max_lengths = {}
@@ -185,3 +205,69 @@ class ExcelStyler:
                 for cell in row:
                     cell.alignment = cls.CENTER_ALIGNMENT
                     cell.border = cls.THIN_BORDER
+
+    # ========== xlsxwriter 引擎支持（一次性写入+格式化，比openpyxl快3-5倍） ==========
+
+    @classmethod
+    def format_worksheet_xlsx(cls, workbook, worksheet, df, header_color='165DFF'):
+        """使用xlsxwriter引擎格式化工作表（一次性写入样式）
+
+        Args:
+            workbook: xlsxwriter Workbook对象
+            worksheet: xlsxwriter Worksheet对象
+            df: pandas DataFrame
+            header_color: 表头颜色（hex，不含#）
+        """
+        # 表头格式
+        hdr_fmt = workbook.add_format({
+            'bold': True,
+            'font_color': '#FFFFFF',
+            'bg_color': f'#{header_color}',
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1,
+            'text_wrap': True,
+            'font_size': 11,
+        })
+
+        # 数据单元格格式
+        cell_fmt = workbook.add_format({
+            'align': 'center',
+            'valign': 'vcenter',
+            'border': 1,
+        })
+
+        # 重写表头（用格式覆盖）
+        headers = list(df.columns)
+        for col_idx, col_name in enumerate(headers):
+            worksheet.write(0, col_idx, col_name, hdr_fmt)
+
+        # 批量写入数据行格式
+        data_rows = normalize_excel_rows(df.values.tolist())
+        for row_idx, row in enumerate(data_rows, start=1):
+            worksheet.write_row(row_idx, 0, row, cell_fmt)
+
+        # 自动列宽
+        cls.auto_adjust_column_width_xlsx(workbook, worksheet, headers, df)
+
+    @classmethod
+    def auto_adjust_column_width_xlsx(cls, workbook, worksheet, headers, df, max_width=50, min_width=8):
+        """自动调整列宽（xlsxwriter版 - 向量化计算）
+
+        Args:
+            workbook: xlsxwriter Workbook对象
+            worksheet: xlsxwriter Worksheet对象
+            headers: 列名列表
+            df: pandas DataFrame
+            max_width: 最大列宽
+            min_width: 最小列宽
+        """
+        for col_idx, header in enumerate(headers):
+            # 列宽 = max(表头长度, 数据列最大长度) + 2
+            try:
+                data_max = int(df.iloc[:, col_idx].astype(str).str.len().max())
+            except (ValueError, TypeError):
+                data_max = 0
+            max_len = max(data_max, len(header))
+            adjusted_width = min(max(max_len + 2, min_width), max_width)
+            worksheet.set_column(col_idx, col_idx, adjusted_width)

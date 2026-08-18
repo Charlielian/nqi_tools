@@ -30,6 +30,8 @@ class LoginManager:
         self.parent = parent
         self.sess = requests.Session()
         # 配置 SSL 验证（企业内部系统可能使用自签名证书）
+        # TODO: 禁用 SSL 验证存在 MITM 攻击风险，且全项目 5+ 处重复此设置
+        # 建议：1) 统一在 Session 工厂中设置 2) 尝试添加企业自签名证书到信任链
         self.sess.verify = False  # 禁用 SSL 证书验证
         # 禁用 urllib3 的 SSL 警告
         import urllib3
@@ -134,6 +136,8 @@ class LoginManager:
 
     def _login_with_gui(self):
         """使用 GUI 对话框进行登录验证"""
+        # TODO: 核心模块 core/auth.py 反向依赖 gui/login_dialog.py，导致 CLI 与 GUI 严重耦合。
+        # 建议：将登录交互抽象为回调接口，由调用方（GUI/CLI）注入，核心模块不感知界面。
         from gui.login_dialog import LoginDialog
         dialog = LoginDialog(self.parent, self.username, self.password, self.sess)
         result = dialog.show()

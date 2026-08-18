@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 辅助函数模块
-提供验证码处理、Cookie管理等辅助功能
+提供验证码处理、Cookie管理、数据类型转换、URL编码等辅助功能
 """
 
 import os
 import json
 import http.cookiejar
 import logging
+from urllib.parse import quote
 
 from utils.config import COOKIE_DIR, CAPTCHA_DIR, HEADERS
 from utils.logger import ensure_dirs
@@ -205,6 +206,123 @@ def encode_payload(payload):
     """URL编码payload"""
     from urllib.parse import urlencode
     return urlencode(payload, safe='', encoding='utf-8')
+
+
+def datatype_to_code(datatype_str):
+    """将数据类型字符串转换为浏览器使用的数字代码
+
+    浏览器使用的格式:
+    - "2" = bigint/timestamp/integer
+    - "1" = character varying/varchar/character
+    - "decimal" = 小数类型
+    - "boolean" = 布尔类型（保持原样）
+
+    Args:
+        datatype_str: 数据类型字符串
+
+    Returns:
+        转换后的值（可能是数字代码或字符串）
+    """
+    if not datatype_str:
+        return datatype_str
+
+    datatype_lower = datatype_str.lower()
+
+    # bigint, timestamp, integer 类型使用 "2"
+    # 注意：有些表的city字段在API中返回的是integer类型，需要转为"2"
+    if datatype_lower in ('bigint', 'timestamp', 'integer', 'int', '2'):
+        return '2'
+
+    # character varying, varchar, character 使用 "1"
+    if datatype_lower in ('character varying', 'character', 'varchar', 'text', '1'):
+        return '1'
+
+    # boolean 类型使用 "1"（与浏览器一致）
+    if datatype_lower in ('boolean',):
+        return '1'
+
+    # decimal 类型保持原样
+    if datatype_lower in ('decimal', 'numeric', 'double', 'float', 'real'):
+        return datatype_str
+
+    # 其他类型保持原样
+    return datatype_str
+
+
+def _encode_columns_param(columns):
+    """编码 DataTables columns 参数为扁平 URL 格式"""
+    col_parts = []
+    for i, col in enumerate(columns):
+        if isinstance(col, str):
+            col_parts.append(f'columns[{i}]={quote(col)}')
+            continue
+        try:
+            for sub_key, sub_val in col.items():
+                if isinstance(sub_val, dict):
+                    for ss_key, ss_val in sub_val.items():
+                        col_parts.append(f'columns[{i}][{sub_key}][{ss_key}]={quote(str(ss_val), safe="")}')
+                else:
+                    col_parts.append(f'columns[{i}][{sub_key}]={quote(str(sub_val), safe="")}')
+        except AttributeError:
+            continue
+    return '&'.join(col_parts)
+
+
+def _encode_order_param(order):
+    """编码 DataTables order 参数为扁平 URL 格式"""
+    order_parts = []
+    for i, ord_item in enumerate(order):
+        for sub_key, sub_val in ord_item.items():
+            order_parts.append(f'order[{i}][{sub_key}]={quote(str(sub_val), safe="")}')
+    return '&'.join(order_parts)
+
+
+def _encode_search_param(search):
+    """编码 DataTables search 参数为扁平 URL 格式"""
+    search_parts = []
+    for sub_key, sub_val in search.items():
+        search_parts.append(f'search[{sub_key}]={quote(str(sub_val), safe="")}')
+    return '&'.join(search_parts)
+
+
+def _encode_json_param(key, value):
+    """编码 JSON 序列化参数（result / where）"""
+    json_str = json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+    return quote(key) + '=' + quote(json_str, safe='/:= ')
+
+
+def encode_datatables_payload(payload):
+    """URL编码payload - 使用DataTables标准格式，与浏览器完全一致
+
+    处理 columns / order / search（DataTables 扁平格式）以及 result / where（JSON 序列化）。
+
+    Args:
+        payload: 请求参数dict
+
+    Returns:
+        str: URL编码后的请求体
+    """
+    out_list = []
+    for key in payload:
+        if key == 'columns':
+            if isinstance(payload[key], str):
+                out_list.append(quote(key) + '=' + quote(payload[key]))
+                continue
+            elif not isinstance(payload[key], list):
+                out_list.append(quote(key) + '=' + quote(str(payload[key])))
+                continue
+            out_list.append(_encode_columns_param(payload[key]))
+        elif key == 'order':
+            out_list.append(_encode_order_param(payload[key]))
+        elif key == 'search':
+            out_list.append(_encode_search_param(payload[key]))
+        elif key in ['result', 'where']:
+            out_list.append(_encode_json_param(key, payload[key]))
+        elif isinstance(payload[key], int):
+            out_list.append(quote(key) + '=' + str(payload[key]))
+        else:
+            out_list.append(quote(key) + '=' + quote(str(payload[key]) if payload[key] is not None else ''))
+    return '&'.join(out_list)
 
 
 def get_timestamp():

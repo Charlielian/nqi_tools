@@ -292,8 +292,8 @@ def sanitize_log(message):
 
 # ========== 兼容旧API ==========
 
-_original_print = print
 _log_file_path = None
+_original_print = print
 
 
 def set_log_file(filepath, max_bytes=10*1024*1024, backup_count=5):
@@ -311,7 +311,12 @@ def set_log_file(filepath, max_bytes=10*1024*1024, backup_count=5):
 
 
 def debug_print(*args, **kwargs):
-    """增强的print函数，同时输出到控制台和日志文件"""
+    """增强的print函数，同时输出到控制台和日志文件
+
+    注意：不会全局替换内置print，仅在需要时显式调用。
+    旧版 set_log_file + 自动猴子补丁 print 的方式已被移除，
+    避免影响第三方库的 print 输出。
+    """
     output = io.StringIO()
     kwargs_copy = {k: v for k, v in kwargs.items()}
     kwargs_copy['file'] = output
@@ -325,6 +330,3 @@ def debug_print(*args, **kwargs):
     if _log_file_path:
         with open(_log_file_path, 'a', encoding='utf-8') as f:
             f.write(message)
-
-
-print = debug_print

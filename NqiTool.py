@@ -84,12 +84,12 @@ def start_main_app(expiry_time):
     root = tk.Tk()
 
     # 检查是否需要首次运行设置
-    needs_setup, new_credentials = check_and_setup_credentials()
+    needs_setup, new_credentials = check_and_setup_credentials(parent=root)
     if needs_setup and new_credentials is None:
         root.destroy()
         return
 
-    app = NqiToolGUI(root, expiry_time)
+    app = NqiToolGUI(root, expiry_time, credentials=new_credentials)
     app.run()
 
 

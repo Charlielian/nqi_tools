@@ -9,6 +9,8 @@ from tkinter import ttk
 import logging
 from datetime import datetime, timedelta
 
+# 字段配置已迁移至 gui/field_configs.json（经 gui/field_configs.py 薄加载器动态加载），
+# 修改字段配置只需编辑 JSON 文件，无需改代码。
 # 导入字段配置
 from gui.field_configs import (
     INTERFERENCE_5G_FIELDS, INTERFERENCE_4G_FIELDS, INTERFERENCE_5G_ZIMANG_FIELDS,
@@ -284,6 +286,7 @@ class DateEntry(ttk.Entry):
 class MultiSelectDropdown(ttk.Frame):
     """带复选框的下拉选择组件（支持下拉滚动）"""
 
+    # TODO: 广东地市列表硬编码在此，应改为配置项（config.yaml 或 YAML 配置）以便扩展
     GD_CITIES = ['广州', '深圳', '东莞', '佛山', '中山', '珠海', '江门', '肇庆',
                  '惠州', '汕头', '潮州', '揭阳', '汕尾', '湛江', '茂名', '阳江',
                  '云浮', '韶关', '梅州', '河源', '清远']
@@ -485,15 +488,21 @@ class MultiSelectDropdown(ttk.Frame):
 
 
 class TableConfig:
-    """数据表配置类 - 支持YAML自动加载"""
+    """数据表配置类 - 仅使用硬编码配置
 
-    # 强制使用的数据源（用于切换测试）
-    # None = 自动模式（优先YAML，回退到旧配置）
-    # 'yaml' = 强制使用YAML配置
-    # 'old' = 强制使用旧代码配置
-    force_source = None
+    YAML配置已禁用（存在过多问题），所有表格配置均来自
+    硬编码的 TABLE_CONFIGS 和 payload_templates 中的payload函数。
 
-    # 旧配置（备用，用于向后兼容）
+    TODO: 硬编码的 TABLE_CONFIGS 700+ 行导致修改配置需改代码，
+          建议修复 YAML 配置机制的问题后重新启用，或改用数据库/配置中心。
+    """
+
+    # ========== YAML配置已移除 ==========
+    # table_configs/ 和 custom_configs/ 目录及其加载器已删除。
+    # 所有表格配置统一使用 TABLE_CONFIGS 硬编码 + field_configs.json 动态加载。
+    force_source = 'old'
+
+    # 旧配置（唯一配置源）
     TABLE_CONFIGS = {
         # ========== 干扰类 ==========
         '5G干扰小区': {
@@ -983,54 +992,43 @@ class TableConfig:
         },
     }
 
-    # YAML加载器单例
+    # YAML加载器单例（已禁用，保留引用避免其他模块报错）
     _yaml_loader = None
 
     @classmethod
     def set_config_source(cls, source):
-        """设置配置数据源
+        """设置配置数据源（YAML已禁用，此方法保留但不再生效）
 
         Args:
             source: 数据源类型
-                - None: 自动模式（优先YAML，回退到旧配置）
-                - 'yaml': 强制使用YAML配置
-                - 'old': 强制使用旧代码配置
         """
-        if source not in (None, 'yaml', 'old'):
-            raise ValueError(f"无效的配置源: {source}，有效值为 None, 'yaml', 'old'")
-        cls.force_source = source
+        # YAML配置已禁用，强制使用硬编码配置
+        cls.force_source = 'old'
 
     @classmethod
     def _get_yaml_loader(cls):
-        """获取YAML加载器"""
-        if cls._yaml_loader is None:
-            from gui.table_config_loader import TableConfigLoader
-            cls._yaml_loader = TableConfigLoader()
-            cls._yaml_loader.load_all()
-        return cls._yaml_loader
+        """获取YAML加载器（已禁用）
+
+        YAML配置存在过多问题已被禁用，此方法返回None。
+        所有配置均来自 TABLE_CONFIGS 硬编码。
+        """
+        return None
 
     @classmethod
     def get_table_names(cls):
-        """获取所有数据表名称（YAML配置 + 旧配置）
+        """获取所有数据表名称（仅硬编码配置）
 
         Returns:
             list: 所有表格名称，按字母排序
         """
-        # 从YAML加载的表格
-        yaml_names = set(cls._get_yaml_loader().get_all_names())
-        # 从旧配置加载的表格
         old_names = set(cls.TABLE_CONFIGS.keys())
-        # 合并并排序
-        return sorted(yaml_names | old_names)
+        return sorted(old_names)
 
     @classmethod
     def get_table_config(cls, table_name):
         """获取指定数据表的配置
 
-        根据 force_source 决定使用哪个数据源：
-        - 'yaml': 强制使用YAML配置
-        - 'old': 强制使用旧代码配置
-        - None: 自动模式（优先YAML，回退到旧配置）
+        YAML配置已禁用，仅从硬编码 TABLE_CONFIGS 获取配置。
 
         Args:
             table_name: 表格名称
@@ -1039,51 +1037,34 @@ class TableConfig:
             dict: 表格配置，如果不存在则返回None
         """
         # 根据 force_source 决定使用哪个数据源
-        if cls.force_source == 'yaml':
-            return cls._get_yaml_loader().get_config(table_name)
-        elif cls.force_source == 'old':
-            return cls.TABLE_CONFIGS.get(table_name)
-        else:
-            # 默认行为：优先从YAML获取，如果不存在则回退到旧配置
-            yaml_config = cls._get_yaml_loader().get_config(table_name)
-            if yaml_config:
-                return yaml_config
-            return cls.TABLE_CONFIGS.get(table_name)
+        # YAML配置已禁用，仅从硬编码 TABLE_CONFIGS 获取配置
+        return cls.TABLE_CONFIGS.get(table_name)
 
     @classmethod
     def get_all_configs(cls):
-        """获取所有数据表配置（合并YAML和旧配置）
+        """获取所有数据表配置（仅硬编码配置）
 
         Returns:
             dict: 所有表格配置
         """
-        all_configs = dict(cls.TABLE_CONFIGS)
-        all_configs.update(cls._get_yaml_loader()._configs)
-        return all_configs
+        return dict(cls.TABLE_CONFIGS)
 
     @classmethod
     def build_payload_from_yaml(cls, table_name, start_date, end_date, city):
-        """从YAML配置构建payload
+        """从YAML配置构建payload（已禁用）
 
-        Args:
-            table_name: 表格名称
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
-            city: 地市名称
+        YAML配置已禁用，此方法返回None。
+        请使用硬编码 payload_func 替代。
 
         Returns:
-            dict: 构建好的payload，如果配置不存在则返回None
+            None
         """
-        config = cls.get_table_config(table_name)
-        if config:
-            return cls._get_yaml_loader().build_payload(config, start_date, end_date, city)
         return None
 
     @classmethod
     def reload_yaml_configs(cls):
-        """重新加载YAML配置"""
-        if cls._yaml_loader:
-            cls._yaml_loader.reload()
+        """重新加载YAML配置（已禁用，YAML配置不可用）"""
+        pass
 
 
 class WeekSelector(ttk.Frame):

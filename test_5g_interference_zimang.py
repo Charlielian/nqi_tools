@@ -16,7 +16,6 @@ import urllib3
 import datetime
 import random
 import time
-from urllib.parse import quote
 
 urllib3.disable_warnings()
 
@@ -147,50 +146,8 @@ def print_cookie_details(cookie_jar, title):
 
 def encode_payload(payload):
     """URL编码payload - 与正式代码一致"""
-    out_list = []
-    for key in payload:
-        if key == 'columns':
-            if isinstance(payload[key], str):
-                out_list.append(quote(key) + '=' + quote(payload[key]))
-                continue
-            elif not isinstance(payload[key], list):
-                out_list.append(quote(key) + '=' + quote(str(payload[key])))
-                continue
-
-            col_parts = []
-            for i, col in enumerate(payload[key]):
-                if isinstance(col, str):
-                    col_parts.append(f'columns[{i}]={quote(col)}')
-                    continue
-                try:
-                    for sub_key, sub_val in col.items():
-                        if isinstance(sub_val, dict):
-                            for ss_key, ss_val in sub_val.items():
-                                col_parts.append(f'columns[{i}][{sub_key}][{ss_key}]={quote(str(ss_val))}')
-                        else:
-                            col_parts.append(f'columns[{i}][{sub_key}]={quote(str(sub_val))}')
-                except AttributeError:
-                    continue
-            out_list.append('&'.join(col_parts))
-        elif key == 'order':
-            order_parts = []
-            for i, ord_item in enumerate(payload[key]):
-                for sub_key, sub_val in ord_item.items():
-                    order_parts.append(f'order[{i}][{sub_key}]={quote(str(sub_val))}')
-            out_list.append('&'.join(order_parts))
-        elif key == 'search':
-            search_parts = []
-            for sub_key, sub_val in payload[key].items():
-                search_parts.append(f'search[{sub_key}]={quote(str(sub_val))}')
-            out_list.append('&'.join(search_parts))
-        elif key in ['result', 'where']:
-            json_str = json.dumps(payload[key], ensure_ascii=False, separators=(',', ':'))
-            out_list.append(quote(key) + '=' + quote(json_str))
-        elif isinstance(payload[key], int):
-            out_list.append(quote(key) + '=' + str(payload[key]))
-        else:
-            out_list.append(quote(key) + '=' + quote(str(payload[key]) if payload[key] is not None else ''))
-    return '&'.join(out_list)
+    from utils.helpers import encode_datatables_payload
+    return encode_datatables_payload(payload)
 
 
 def build_payload_from_field_configs():

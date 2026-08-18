@@ -34,7 +34,9 @@ BATCH_TIMEOUTS = {
 }
 
 # ========== 并发配置 ==========
-MAX_PARALLEL_QUERIES = 3  # 最大并行查询数
+MAX_PARALLEL_QUERIES = 3      # 并行查询最大并发数（query_tables_parallel）
+DEFAULT_THREAD_POOL_SIZE = 8  # 多任务线程池默认大小（main_window 任务级并发）
+DEFAULT_THREAD_POOL_SMALL = 6 # 小任务线程池大小（main_window 表格并行）
 
 # ========== Excel导出配置 ==========
 EXCEL_BATCH_SIZE = 5000   # 流式导出每批写入的行数

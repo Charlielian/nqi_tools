@@ -18,29 +18,6 @@ def _build_columns_param(field_list):
     return columns
 
 
-def _build_columns_param_v2(field_list):
-    """构建DataTables格式的columns参数（包含更多字段，与浏览器HAR格式一致）
-    
-    浏览器HAR中的columns格式:
-    columns[0][data]: starttime
-    columns[0][name]: 
-    columns[0][searchable]: true
-    columns[0][orderable]: true
-    columns[0][search][value]: 
-    columns[0][search][regex]: false
-    """
-    columns = []
-    for field in field_list:
-        columns.append({
-            'data': field,
-            'name': '',
-            'searchable': True,
-            'orderable': True,
-            'search': {'value': '', 'regex': False}
-        })
-    return columns
-
-
 def _build_result_fields(fields_config, fieldtype, table_name, fixed_datatype_fields=None):
     """构建result字段列表
     

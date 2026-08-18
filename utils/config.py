@@ -10,6 +10,8 @@ import yaml
 
 # ========== 全局 SSL 配置 ==========
 # 企业内部系统可能使用自签名证书，禁用 SSL 警告
+# TODO: 全局禁用 SSL 证书验证存在 MITM 攻击风险，
+# 建议改用自签名证书文件或 requests 的 verify 参数指定 CA bundle
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -45,6 +47,9 @@ def get_default_config():
         },
         'server': {
             'base_url': 'https://nqi.gmcc.net:20443'
+        },
+        'logging': {
+            'detailed': False
         }
     }
 
@@ -106,6 +111,8 @@ def load_config():
 
 
 _config = load_config()
+# TODO: 模块导入时立即执行 load_config()，测试时难以 mock，且启动失败时静默降级。
+# 建议改为惰性加载（首次使用时再加载）或提供 reset/reload 接口。
 
 DEFAULT_USERNAME = _config['auth']['username']
 DEFAULT_PASSWORD = _config['auth']['password']
@@ -115,6 +122,9 @@ CAPTCHA_DIR = _config['paths']['captcha_dir']
 LOG_DIR = _config['paths']['log_dir']
 
 BASE_URL = _config['server']['base_url']
+
+# ========== 日志配置 ==========
+LOGGING_DETAILED = _config.get('logging', {}).get('detailed', False)
 LOGIN_URL = f'{BASE_URL}/cas/login?service={BASE_URL}/pro-portal/'
 CAPTCHA_URL = f'{BASE_URL}/cas/captcha.jpg'
 GET_CONFIG_URL = f'{BASE_URL}/cas/getConfig'
@@ -152,6 +162,7 @@ HEADERS_JSON = {
 }
 
 EXPIRY_DATE = "2026-09-30"
+# TODO: EXPIRY_DATE 硬编码在模块中，每次延期需修改代码。建议改为从外部文件或环境变量读取。
 LICENSE_FILE = "license.dat"
 
 # 配置目录（与app_path相同，用于存放secrets.yaml等配置文件）

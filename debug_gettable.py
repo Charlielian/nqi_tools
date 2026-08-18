@@ -128,9 +128,10 @@ def test_get_table(username, password, report_name="5G小区容量-周"):
     logger.info("")
     logger.info("【调试方案1】使用 _encode_payload 方法（含columns/order/search）...")
     
-    # 使用 JXCXQuery 的 _encode_payload 方法进行编码
+    # 使用统一函数进行编码（替代 query._encode_payload）
     # 这样方括号不会被编码，空字符串参数也会被过滤
-    encoded_data_str = query._encode_payload(payload)
+    from utils.helpers import encode_datatables_payload
+    encoded_data_str = encode_datatables_payload(payload)
     
     logger.info("  参数列表: %s", list(payload.keys()))
     logger.info("  encoded_data 长度: %d 字符", len(encoded_data_str))
@@ -230,7 +231,7 @@ def test_get_table(username, password, report_name="5G小区容量-周"):
     payload2['draw'] = 1
     payload2['total'] = 0
     
-    encoded_data_str2 = query._encode_payload(payload2)
+    encoded_data_str2 = encode_datatables_payload(payload2)
     
     logger.info("  参数列表: %s", list(payload2.keys()))
     logger.info("  encoded_data 长度: %d 字符", len(encoded_data_str2))

@@ -26,6 +26,7 @@ class LoginDialog:
         self.msg_code = None
 
         # 确保 session 禁用 SSL 验证
+        # TODO: self.sess.verify = False 在全项目 5+ 处重复，应统一在 Session 创建时设置一次
         self.sess.verify = False
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)

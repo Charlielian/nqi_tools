@@ -16,7 +16,6 @@ import urllib3
 import datetime
 import random
 import time
-from urllib.parse import quote
 
 urllib3.disable_warnings()
 
@@ -163,51 +162,7 @@ def print_cookie_details(cookie_jar, title="Cookie详情"):
         log(f"  [{i}] {cookie.name}={cookie.value[:40]}...{domain_info}", "DEBUG")
 
 
-def encode_payload(payload):
-    """URL编码payload - 与正式代码一致"""
-    out_list = []
-    for key in payload:
-        if key == 'columns':
-            if isinstance(payload[key], str):
-                out_list.append(quote(key) + '=' + quote(payload[key]))
-                continue
-            elif not isinstance(payload[key], list):
-                out_list.append(quote(key) + '=' + quote(str(payload[key])))
-                continue
-            col_parts = []
-            for i, col in enumerate(payload[key]):
-                if isinstance(col, str):
-                    col_parts.append(f'columns[{i}]={quote(col)}')
-                    continue
-                try:
-                    for sub_key, sub_val in col.items():
-                        if isinstance(sub_val, dict):
-                            for ss_key, ss_val in sub_val.items():
-                                col_parts.append(f'columns[{i}][{sub_key}][{ss_key}]={quote(str(ss_val))}')
-                        else:
-                            col_parts.append(f'columns[{i}][{sub_key}]={quote(str(sub_val))}')
-                except AttributeError:
-                    continue
-            out_list.append('&'.join(col_parts))
-        elif key == 'order':
-            order_parts = []
-            for i, ord_item in enumerate(payload[key]):
-                for sub_key, sub_val in ord_item.items():
-                    order_parts.append(f'order[{i}][{sub_key}]={quote(str(sub_val))}')
-            out_list.append('&'.join(order_parts))
-        elif key == 'search':
-            search_parts = []
-            for sub_key, sub_val in payload[key].items():
-                search_parts.append(f'search[{sub_key}]={quote(str(sub_val))}')
-            out_list.append('&'.join(search_parts))
-        elif key in ['result', 'where']:
-            json_str = json.dumps(payload[key], ensure_ascii=False, separators=(',', ':'))
-            out_list.append(quote(key) + '=' + quote(json_str))
-        elif isinstance(payload[key], int):
-            out_list.append(quote(key) + '=' + str(payload[key]))
-        else:
-            out_list.append(quote(key) + '=' + quote(str(payload[key]) if payload[key] is not None else ''))
-    return '&'.join(out_list)
+from utils.helpers import encode_datatables_payload
 
 
 class JxcxSimulator:
@@ -291,7 +246,7 @@ class JxcxSimulator:
                     'timeField', 'cellField', 'cityField', 'result', 'where', 'indexcount',
                     'columns', 'order', 'search']
         payload_count = {key: value for key, value in payload.items() if key in key_list}
-        payload_encoded = encode_payload(payload_count)
+        payload_encoded = encode_datatables_payload(payload_count)
 
         # 诊断Session状态
         log("[Session状态诊断]", "INFO")
@@ -417,7 +372,7 @@ class JxcxSimulator:
             return []
 
         # 编码payload
-        payload_encoded = encode_payload(payload)
+        payload_encoded = encode_datatables_payload(payload)
 
         log(f"请求URL: {JXCX_URL}", "INFO")
         log(f"编码后Payload长度: {len(payload_encoded)} 字符", "DEBUG")

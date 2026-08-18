@@ -8,14 +8,18 @@ import os
 import logging
 import time
 import inspect
+# TODO: 使用 inspect.signature 检测 payload_func 参数个数，说明 payload 函数签名不一致。
+# 建议统一 payload 函数签名（如统一为 (start_date, end_date, city)），消除运行时反射。
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+import copy
 
 import pandas as pd
 
 from utils.config import OUTPUT_DIR
 from utils.logger import ensure_dirs, get_report_logger
+from core.export import export_dataframe_streaming
 from core.query import JXCXQuery
 
 logger = logging.getLogger(__name__)
@@ -123,8 +127,15 @@ class FlowTableBuilder:
         Returns:
             dict: 包含 table_name, df, success, error_message 的结果字典
         """
-        # 为每个线程创建独立的JXCXQuery实例
-        jxcx = JXCXQuery(self.session)
+        # 为每个线程创建独立的requests.Session（复制cookies，避免并发共享同一Session）
+        import requests as req
+        thread_session = req.Session()
+        for c in self.session.cookies:
+            thread_session.cookies.set_cookie(c)
+        for attr in ('verify', 'trust_env', 'headers', 'auth', 'proxies', 'params', 'cert'):
+            if hasattr(self.session, attr):
+                setattr(thread_session, attr, copy.copy(getattr(self.session, attr)))
+        jxcx = JXCXQuery(thread_session)
         
         try:
             # 进入即席查询模块
@@ -139,47 +150,21 @@ class FlowTableBuilder:
             # 构建payload
             from gui.widgets import TableConfig
             payload = None
-            
-            force_source = TableConfig.force_source
-            
-            if force_source == 'old':
-                table_config = TableConfig.get_table_config(table_name)
-                if table_config and table_config.get('payload_func'):
-                    payload_func = table_config.get('payload_func')
+
+            table_config = TableConfig.get_table_config(table_name)
+            if table_config and table_config.get('payload_func'):
+                payload_func = table_config.get('payload_func')
+                try:
+                    sig = inspect.signature(payload_func)
+                    if len(sig.parameters) > 0:
+                        payload = payload_func(self.start_date, self.end_date, self.city)
+                    else:
+                        payload = payload_func()
+                except (ValueError, TypeError):
                     try:
-                        sig = inspect.signature(payload_func)
-                        if len(sig.parameters) > 0:
-                            payload = payload_func(self.start_date, self.end_date, self.city)
-                        else:
-                            payload = payload_func()
-                    except (ValueError, TypeError):
-                        try:
-                            payload = payload_func(self.start_date, self.end_date, self.city)
-                        except TypeError:
-                            payload = payload_func()
-            elif force_source == 'yaml':
-                payload = TableConfig.build_payload_from_yaml(
-                    table_name, self.start_date, self.end_date, self.city
-                )
-            else:
-                payload = TableConfig.build_payload_from_yaml(
-                    table_name, self.start_date, self.end_date, self.city
-                )
-                if not payload:
-                    table_config = TableConfig.get_table_config(table_name)
-                    if table_config and table_config.get('payload_func'):
-                        payload_func = table_config.get('payload_func')
-                        try:
-                            sig = inspect.signature(payload_func)
-                            if len(sig.parameters) > 0:
-                                payload = payload_func(self.start_date, self.end_date, self.city)
-                            else:
-                                payload = payload_func()
-                        except (ValueError, TypeError):
-                            try:
-                                payload = payload_func(self.start_date, self.end_date, self.city)
-                            except TypeError:
-                                payload = payload_func()
+                        payload = payload_func(self.start_date, self.end_date, self.city)
+                    except TypeError:
+                        payload = payload_func()
 
             if not payload:
                 return {
@@ -224,6 +209,7 @@ class FlowTableBuilder:
         download_start = time.time()
         
         # 并行下载
+        # TODO: max_workers=4 硬编码，应统一从配置/系统资源获取
         with ThreadPoolExecutor(max_workers=4) as executor:
             # 提交所有下载任务
             future_to_table = {
@@ -249,7 +235,8 @@ class FlowTableBuilder:
                     # 保存原始数据
                     filename = f"{result['table_name']}_{self.start_date}_{self.end_date}.xlsx"
                     filepath = self.raw_dir / filename
-                    result['df'].to_excel(filepath, index=False)
+                    if not export_dataframe_streaming(result['df'], str(filepath), sheet_name='数据'):
+                        raise RuntimeError(f"原始表导出失败: {result['table_name']}")
                     self._log(f"  ✅ [{result['table_name']}] 成功: {len(result['df'])} 行, 耗时: {task_elapsed:.1f}秒")
                 else:
                     failed_tables.append((result['table_name'], result.get('error', '未知错误')))
@@ -635,7 +622,10 @@ class FlowTableBuilder:
                 is_na_traffic = result['日均流量'].isna()
                 is_tail = (result['日均流量'] <= tail_threshold) & ~is_na_traffic
                 is_zero = result['日均流量'] == 0
-                is_high_util = result['自忙时利用率'].notna() & (result['自忙时利用率'] > 20)
+                if '自忙时利用率' in result.columns:
+                    is_high_util = result['自忙时利用率'].notna() & (result['自忙时利用率'] > 20)
+                else:
+                    is_high_util = pd.Series([False] * len(result))
                 
                 result.loc[is_tail & is_zero, '长尾小区'] = '长尾具体原因待确认'
                 result.loc[is_tail & ~is_zero & is_high_util, '长尾小区'] = '长尾待观察'
@@ -1093,21 +1083,24 @@ class FlowTableBuilder:
         if table_5g is not None and not table_5g.empty:
             filename_5g = f"合成_容量表_5G_{timestamp}.xlsx"
             filepath_5g = self.merged_dir / filename_5g
-            table_5g.to_excel(filepath_5g, index=False)
+            if not export_dataframe_streaming(table_5g, str(filepath_5g), sheet_name='数据'):
+                raise RuntimeError(f"5G结果导出失败: {filename_5g}")
             self._log(f"已保存: {filename_5g}")
 
         # 保存4G表
         if table_4g is not None and not table_4g.empty:
             filename_4g = f"合成_容量表_4G_{timestamp}.xlsx"
             filepath_4g = self.merged_dir / filename_4g
-            table_4g.to_excel(filepath_4g, index=False)
+            if not export_dataframe_streaming(table_4g, str(filepath_4g), sheet_name='数据'):
+                raise RuntimeError(f"4G结果导出失败: {filename_4g}")
             self._log(f"已保存: {filename_4g}")
 
         # 保存45G总表
         if table_45g is not None and not table_45g.empty:
             filename_45g = f"容量表_45G_{timestamp}.xlsx"
             filepath_45g = self.merged_dir / filename_45g
-            table_45g.to_excel(filepath_45g, index=False)
+            if not export_dataframe_streaming(table_45g, str(filepath_45g), sheet_name='数据'):
+                raise RuntimeError(f"45G结果导出失败: {filename_45g}")
             self._log(f"已保存: {filename_45g}")
         
         self._log(f"结果已保存到: {self.output_dir}")

@@ -487,6 +487,7 @@ def diagnose_build_payload(query, table_name, payload_func, start_date, end_date
 def diagnose_count(query, payload, table_name):
     """S4: Count 查询诊断（打印完整请求/响应）"""
     from utils.config import JXCX_COUNT_URL, HEADERS
+    from utils.helpers import encode_datatables_payload
     log = logger
     steps = {}
 
@@ -539,7 +540,7 @@ def diagnose_count(query, payload, table_name):
         ], title="[S4] Count 请求参数")
 
         # 编码
-        encoded = query._encode_payload(payload_count)
+        encoded = encode_datatables_payload(payload_count)
         _box_log(log, [
             f"编码后长度: {len(encoded)} 字符",
             f"前 300 字符: {encoded[:300]}",
@@ -628,6 +629,7 @@ def diagnose_count(query, payload, table_name):
 def diagnose_data(query, payload, table_name, limit, count):
     """S5: Data 查询诊断（打印完整请求/响应）"""
     from utils.config import JXCX_URL, HEADERS
+    from utils.helpers import encode_datatables_payload
     log = logger
     steps = {}
 
@@ -666,7 +668,7 @@ def diagnose_data(query, payload, table_name, limit, count):
         ], title="[S5] Data 请求参数")
 
         # 编码
-        encoded = query._encode_payload(data_payload)
+        encoded = encode_datatables_payload(data_payload)
         log.info("[S5] 编码后 payload 长度: %d 字符", len(encoded))
 
         # --- 发送请求 ---
