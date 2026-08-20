@@ -120,6 +120,58 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(thread_query.sess.verify, session.verify)
         self.assertEqual(thread_query.sess.trust_env, session.trust_env)
 
+    def test_date_helpers_cover_month_lengths_and_range_validation(self):
+        from gui.main_window import _get_month_days, _parse_date_range
+
+        self.assertEqual(len(_get_month_days(2025, 2)), 28)
+        self.assertEqual(len(_get_month_days(2024, 2)), 29)
+        self.assertEqual(len(_get_month_days(2025, 4)), 30)
+        self.assertEqual(len(_get_month_days(2025, 1)), 31)
+        self.assertEqual(_get_month_days(2025, 2)[-1], 28)
+        self.assertEqual(
+            _parse_date_range("2025-12-31", "2026-01-01")[0].strftime("%Y-%m-%d"),
+            "2025-12-31",
+        )
+        with self.assertRaises(ValueError):
+            _parse_date_range("2025-02-30", "2025-03-01")
+        with self.assertRaisesRegex(ValueError, "不能晚于"):
+            _parse_date_range("2026-01-02", "2026-01-01")
+
+    def test_calendar_weekday_uses_monday_based_index(self):
+        import calendar
+
+        self.assertEqual(calendar.monthrange(2024, 1)[0], 0)
+        self.assertEqual(calendar.monthrange(2024, 9)[0], 6)
+
+    def test_vonr_warning_payload_contains_radio_call_metrics_once(self):
+        from gui.field_configs import VONR_WARNING_FIELDS
+        from gui.payload_templates import get_vonr_warning_payload
+
+        expected = {
+            "vonr_local_radio_single_voice_call": "VONR_语音本端无线单通通话数",
+            "vonr_local_radio_dx_call": "VONR_语音本端无线断续通话数",
+            "vonr_ans_voice_call": "VONR_语音通话总数",
+            "vonr_local_radio_dtdx_rate": "VONR_单通断续次数占比",
+        }
+        payload = get_vonr_warning_payload("2026-08-18", "2026-08-18", "阳江")
+        columns = [column["data"] for column in payload["columns"]]
+        result = {item["feild"]: item for item in payload["result"]["result"]}
+
+        self.assertEqual(len(columns), len(set(columns)))
+        self.assertEqual(set(columns), set(result))
+        self.assertEqual(
+            {field: result[field]["feildName"] for field in expected}, expected
+        )
+
+        config = {item["feild"]: item for item in VONR_WARNING_FIELDS}
+        self.assertEqual(
+            {field: config[field]["feildName"] for field in expected}, expected
+        )
+        for field in expected:
+            self.assertEqual(config[field]["datatype"], "character varying")
+            self.assertEqual(config[field]["columntype"], "1")
+            self.assertEqual(config[field]["table"], "csem.f_nk_vonr_keykpi_cell_d")
+
 
 if __name__ == "__main__":
     unittest.main()

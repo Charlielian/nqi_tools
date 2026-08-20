@@ -10,6 +10,7 @@ import threading
 import logging
 import os
 import queue
+import calendar
 
 from datetime import datetime, timedelta
 
@@ -26,6 +27,19 @@ from utils.config import (
     LOGGING_DETAILED,
 )
 
+
+def _get_month_days(year, month):
+    """返回指定年月的合法日期序列。"""
+    return tuple(range(1, calendar.monthrange(year, month)[1] + 1))
+
+
+def _parse_date_range(start_date, end_date):
+    """解析并校验查询日期范围，返回两个 datetime 对象。"""
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    if start > end:
+        raise ValueError("开始日期不能晚于结束日期")
+    return start, end
 
 def check_and_setup_credentials(parent=None):
     """检查并设置凭证，如需首次运行引导则显示向导
@@ -433,19 +447,29 @@ class NqiToolGUI:
         start_frame.pack(side=tk.LEFT)
 
         current_year = datetime.now().year
-        ttk.Combobox(start_frame, textvariable=self.start_year_var,
-                   values=list(range(2020, current_year + 1)),
-                   width=4, state="readonly").pack(side=tk.LEFT)
+        self.start_year_combo = ttk.Combobox(
+            start_frame, textvariable=self.start_year_var,
+            values=list(range(2020, current_year + 1)), width=4, state="readonly"
+        )
+        self.start_year_combo.pack(side=tk.LEFT)
         tk.Label(start_frame, text="-", font=('Microsoft YaHei UI', 8),
                 bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=1)
-        ttk.Combobox(start_frame, textvariable=self.start_month_var,
-                   values=list(range(1, 13)),
-                   width=2, state="readonly").pack(side=tk.LEFT)
+        self.start_month_combo = ttk.Combobox(
+            start_frame, textvariable=self.start_month_var,
+            values=list(range(1, 13)), width=2, state="readonly"
+        )
+        self.start_month_combo.pack(side=tk.LEFT)
         tk.Label(start_frame, text="-", font=('Microsoft YaHei UI', 8),
                 bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=1)
-        ttk.Combobox(start_frame, textvariable=self.start_day_var,
-                   values=list(range(1, 32)),
-                   width=2, state="readonly").pack(side=tk.LEFT)
+        self.start_day_combo = ttk.Combobox(
+            start_frame, textvariable=self.start_day_var,
+            values=list(range(1, 32)), width=2, state="readonly"
+        )
+        self.start_day_combo.pack(side=tk.LEFT)
+        self.start_year_combo.bind('<<ComboboxSelected>>',
+                                   lambda event: self._refresh_date_days('start'))
+        self.start_month_combo.bind('<<ComboboxSelected>>',
+                                    lambda event: self._refresh_date_days('start'))
 
         # 开始日期日历按钮
         start_cal_btn = tk.Button(start_frame, text="📅",
@@ -461,19 +485,31 @@ class NqiToolGUI:
         end_frame = tk.Frame(date_inner, bg='white')
         end_frame.pack(side=tk.LEFT)
 
-        ttk.Combobox(end_frame, textvariable=self.end_year_var,
-                   values=list(range(2020, current_year + 1)),
-                   width=4, state="readonly").pack(side=tk.LEFT)
+        self.end_year_combo = ttk.Combobox(
+            end_frame, textvariable=self.end_year_var,
+            values=list(range(2020, current_year + 1)), width=4, state="readonly"
+        )
+        self.end_year_combo.pack(side=tk.LEFT)
         tk.Label(end_frame, text="-", font=('Microsoft YaHei UI', 8),
                 bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=1)
-        ttk.Combobox(end_frame, textvariable=self.end_month_var,
-                   values=list(range(1, 13)),
-                   width=2, state="readonly").pack(side=tk.LEFT)
+        self.end_month_combo = ttk.Combobox(
+            end_frame, textvariable=self.end_month_var,
+            values=list(range(1, 13)), width=2, state="readonly"
+        )
+        self.end_month_combo.pack(side=tk.LEFT)
         tk.Label(end_frame, text="-", font=('Microsoft YaHei UI', 8),
                 bg='white', fg='#5f6368').pack(side=tk.LEFT, padx=1)
-        ttk.Combobox(end_frame, textvariable=self.end_day_var,
-                   values=list(range(1, 32)),
-                   width=2, state="readonly").pack(side=tk.LEFT)
+        self.end_day_combo = ttk.Combobox(
+            end_frame, textvariable=self.end_day_var,
+            values=list(range(1, 32)), width=2, state="readonly"
+        )
+        self.end_day_combo.pack(side=tk.LEFT)
+        self.end_year_combo.bind('<<ComboboxSelected>>',
+                                 lambda event: self._refresh_date_days('end'))
+        self.end_month_combo.bind('<<ComboboxSelected>>',
+                                  lambda event: self._refresh_date_days('end'))
+        self._refresh_date_days('start')
+        self._refresh_date_days('end')
 
         # 结束日期日历按钮
         end_cal_btn = tk.Button(end_frame, text="📅",
@@ -1019,6 +1055,28 @@ F1        - 显示此帮助
         ttk.Button(btn_frame, text="确定", command=on_ok, width=10).pack(side=tk.RIGHT, padx=5)
         ttk.Button(btn_frame, text="取消", command=on_cancel, width=10).pack(side=tk.RIGHT, padx=5)
 
+    def _refresh_date_days(self, date_type):
+        """按年月刷新日期下拉框，只保留当月实际存在的日期。"""
+        if date_type == 'start':
+            year_var, month_var, day_var = (
+                self.start_year_var, self.start_month_var, self.start_day_var
+            )
+            day_combo = self.start_day_combo
+        else:
+            year_var, month_var, day_var = (
+                self.end_year_var, self.end_month_var, self.end_day_var
+            )
+            day_combo = self.end_day_combo
+
+        try:
+            valid_days = _get_month_days(year_var.get(), month_var.get())
+        except (TypeError, ValueError):
+            return
+
+        day_combo['values'] = valid_days
+        if day_var.get() > valid_days[-1]:
+            day_var.set(valid_days[-1])
+
     def set_quick_date(self, days):
         """设置快捷日期"""
         end_date = datetime.now() - timedelta(days=1)
@@ -1027,10 +1085,12 @@ F1        - 显示此帮助
         self.start_year_var.set(start_date.year)
         self.start_month_var.set(start_date.month)
         self.start_day_var.set(start_date.day)
+        self._refresh_date_days('start')
 
         self.end_year_var.set(end_date.year)
         self.end_month_var.set(end_date.month)
         self.end_day_var.set(end_date.day)
+        self._refresh_date_days('end')
 
         self.log(f"设置快捷日期: 近{days}天", "INFO")
 
@@ -1066,11 +1126,13 @@ F1        - 显示此帮助
                 self.start_year_var.set(year)
                 self.start_month_var.set(month)
                 self.start_day_var.set(day)
+                self._refresh_date_days('start')
                 self.log(f"选择开始日期: {selected_date}", "INFO")
             else:
                 self.end_year_var.set(year)
                 self.end_month_var.set(month)
                 self.end_day_var.set(day)
+                self._refresh_date_days('end')
                 self.log(f"选择结束日期: {selected_date}", "INFO")
 
     def update_progress(self, current, total, detail=""):
@@ -1253,6 +1315,11 @@ F1        - 显示此帮助
         # 获取日期范围
         start_date = f"{self.start_year_var.get()}-{self.start_month_var.get():02d}-{self.start_day_var.get():02d}"
         end_date = f"{self.end_year_var.get()}-{self.end_month_var.get():02d}-{self.end_day_var.get():02d}"
+        try:
+            _parse_date_range(start_date, end_date)
+        except ValueError as exc:
+            messagebox.showwarning("日期无效", str(exc))
+            return
         
         # 获取选中的地市
         selected_cities = self.city_dropdown.get_selected()

@@ -326,8 +326,7 @@ class CalendarDialog(tk.Toplevel):
             self.current_year, self.current_month
         )
 
-        # 转换为周一=0
-        first_weekday = (first_weekday - 1) % 7
+        # monthrange() 已返回周一=0、周日=6，直接作为网格列索引
 
         # 创建日期按钮
         from datetime import datetime

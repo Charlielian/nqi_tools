@@ -6931,6 +6931,42 @@
    "tableName": "VONR小区监控预警数据表-天"
   },
   {
+   "feild": "vonr_local_radio_single_voice_call",
+   "feildName": "VONR_语音本端无线单通通话数",
+   "datatype": "character varying",
+   "columntype": "1",
+   "feildtype": "VONR小区监控预警数据表-天",
+   "table": "csem.f_nk_vonr_keykpi_cell_d",
+   "tableName": "VONR小区监控预警数据表-天"
+  },
+  {
+   "feild": "vonr_local_radio_dx_call",
+   "feildName": "VONR_语音本端无线断续通话数",
+   "datatype": "character varying",
+   "columntype": "1",
+   "feildtype": "VONR小区监控预警数据表-天",
+   "table": "csem.f_nk_vonr_keykpi_cell_d",
+   "tableName": "VONR小区监控预警数据表-天"
+  },
+  {
+   "feild": "vonr_ans_voice_call",
+   "feildName": "VONR_语音通话总数",
+   "datatype": "character varying",
+   "columntype": "1",
+   "feildtype": "VONR小区监控预警数据表-天",
+   "table": "csem.f_nk_vonr_keykpi_cell_d",
+   "tableName": "VONR小区监控预警数据表-天"
+  },
+  {
+   "feild": "vonr_local_radio_dtdx_rate",
+   "feildName": "VONR_单通断续次数占比",
+   "datatype": "character varying",
+   "columntype": "1",
+   "feildtype": "VONR小区监控预警数据表-天",
+   "table": "csem.f_nk_vonr_keykpi_cell_d",
+   "tableName": "VONR小区监控预警数据表-天"
+  },
+  {
    "feild": "sacs_start_vonr_call_net_succ_rate",
    "feildName": "VoNR呼叫网络接通率（SA控制起始）",
    "datatype": "numeric",
