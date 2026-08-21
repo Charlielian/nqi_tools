@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 数据导出模块
-负责数据导出到Excel文件
+负责数据导出到Excel文件。
+
+本模块同时保留两条历史导出边界：openpyxl 负责可追加、可重新打开的
+工作簿编辑；xlsxwriter 负责一次性写入和流式高吞吐写入。xlsxwriter
+不能在已有 xlsx 上追加 sheet，而 openpyxl 的逐单元格写入适合兼容性
+和后处理、但不适合大表高速生成。所有面向调用方的导出函数都会把失败
+转换为 None/False，而不是把半成品路径当成成功结果返回。
 
 TODO: 本模块提供两套流式导出实现（stream_write_batch openpyxl 版本 与
       export_dataframe_streaming xlsxwriter 版本），但核心查询路径只使用
@@ -27,7 +33,12 @@ logger = logging.getLogger(__name__)
 
 
 def export_to_excel(data, filename, sheet_name='Sheet1', append=False, apply_format=False):
-    """导出数据到Excel文件
+    """导出数据到Excel文件。
+
+    先把允许的输入统一为 DataFrame，再按“是否追加/是否格式化”选择
+    引擎：已有工作簿追加必须用 openpyxl；一次性格式化走 xlsxwriter。
+    调用方应把返回值当作成功凭据，失败或空数据返回 None，不会返回
+    一个可能尚未完整写入的文件名。
 
     Args:
         data: DataFrame 或 dict with 'data' key
@@ -37,7 +48,8 @@ def export_to_excel(data, filename, sheet_name='Sheet1', append=False, apply_for
         apply_format: 是否应用格式化（会降低性能，大数据建议设为False）
 
     Returns:
-        str: 导出文件的完整路径
+        str | None: 成功时返回 OUTPUT_DIR 下的完整路径，输入不支持、数据为空
+            或写入异常时返回 None。
     """
     ensure_dirs()
 
@@ -62,7 +74,9 @@ def export_to_excel(data, filename, sheet_name='Sheet1', append=False, apply_for
         else:
             # 快速模式：直接写入
             if append and os.path.exists(filepath):
-                # 追加模式下 pd.ExcelWriter 只支持 openpyxl/xlswriter 引擎（不支持xlsxwriter）
+                # openpyxl 才能在已有 xlsx 中保留工作簿并追加 sheet；xlsxwriter
+                # 是只写引擎，不能读取已有文件再追加。非追加路径也明确指定
+                # openpyxl，保持普通快速导出的兼容行为。
                 with pd.ExcelWriter(filepath, engine='openpyxl', mode='a') as writer:
                     df.to_excel(writer, sheet_name=sheet_name, index=False)
                 logger.info("已追加数据到 %s", filepath)
@@ -78,7 +92,10 @@ def export_to_excel(data, filename, sheet_name='Sheet1', append=False, apply_for
 
 
 def format_excel(filepath, header_color=None, font_size=None):
-    """格式化Excel文件（使用ExcelStyler）
+    """格式化Excel文件（使用ExcelStyler）。
+
+    该函数在已有文件上重新打开并保存，因此属于 openpyxl 的后处理边界；
+    它不负责生成临时文件，也不改变导出函数的成功返回值约定。
 
     Args:
         filepath: Excel文件路径
@@ -108,19 +125,16 @@ def format_excel(filepath, header_color=None, font_size=None):
 
 
 def export_with_format(data, filename, sheet_name='Sheet1', header_color='165DFF'):
-    """导出数据到Excel并格式化（一次性写入+格式化，xlsxwriter引擎）
+    """导出数据到Excel并格式化（一次性写入+格式化，xlsxwriter引擎）。
 
-    使用xlsxwriter引擎一次性写入数据和格式，避免二次加载+保存，
-    相比openpyxl方式快3-5倍。
-
-    Args:
-        data: DataFrame 或 dict with 'data' key
-        filename: 文件名
-        sheet_name: 工作表名称
-        header_color: 表头颜色
+    xlsxwriter 在内存中的 workbook 上同时完成写入和格式设置，不需要像
+    openpyxl 后处理那样再次加载/保存。先在目标目录创建临时 xlsx，只有
+    writer 正常关闭后才用 os.replace 替换目标文件；这样中断或异常不会
+    覆盖一个原本可用的旧文件，也不会把未完成的 ZIP 工作簿暴露给用户。
 
     Returns:
-        str: 导出文件的完整路径
+        str | None: 成功完成原子替换时返回最终完整路径；任意写入、关闭或
+            替换失败时清理临时文件并返回 None。
     """
     ensure_dirs()
 
@@ -141,6 +155,9 @@ def export_with_format(data, filename, sheet_name='Sheet1', header_color='165DFF
     writer = None
 
     try:
+        # mkstemp 先在目标目录占位，关闭文件描述符并删除占位文件后，
+        # 再交给 xlsxwriter 创建真正的 ZIP 工作簿。临时文件与目标文件
+        # 同目录，os.replace 才能在同一文件系统内完成原子替换。
         fd, temp_path = tempfile.mkstemp(
             prefix='.nqi-', suffix='.xlsx', dir=os.path.dirname(filepath) or '.'
         )
@@ -158,6 +175,9 @@ def export_with_format(data, filename, sheet_name='Sheet1', header_color='165DFF
             writer.close()
             writer = None
             raise
+        # writer.close() 会完成 xlsxwriter 的 ZIP 封装；只有封装完整才
+        # 进入 os.replace。临时路径置 None 表示替换已成功，异常分支
+        # 因此只会删除尚未交付的临时产物。
         os.replace(temp_path, filepath)
         temp_path = None
         logger.info("数据已导出到 %s (%d行 x %d列)", filepath, len(df), len(df.columns))
@@ -178,14 +198,15 @@ def export_with_format(data, filename, sheet_name='Sheet1', header_color='165DFF
 # ========== 流式导出支持（优化版） ==========
 
 def create_excel_stream(filepath, sheet_name='Sheet1'):
-    """创建流式写入的Excel文件（xlsxwriter引擎）
+    """创建流式写入的Excel工作簿。
 
-    Args:
-        filepath: 文件路径
-        sheet_name: 工作表名称
+    名称沿用旧接口，但当前实现返回的是 openpyxl Workbook/Worksheet，
+    适用于逐行或分批填充及后续重新打开格式化；它并不是下面
+    xlsxwriter ``write_row`` 高吞吐路径的工厂。filepath 仅用于日志，真正
+    保存发生在 finalize 函数中。
 
     Returns:
-        tuple: (workbook, worksheet, writer) 或 None
+        tuple: (workbook, worksheet, writer) 或失败时的 (None, None, None)
     """
     try:
         wb = Workbook()
@@ -254,16 +275,11 @@ def stream_write_batch(worksheet, data_list, start_row, batch_size=1000):
 
 
 def stream_finalize_and_format(workbook, worksheet, filepath, header_color='165DFF'):
-    """完成流式写入并格式化
+    """完成 openpyxl 流式写入并格式化。
 
-    Args:
-        workbook: openpyxl workbook 对象
-        worksheet: openpyxl worksheet 对象
-        filepath: 文件路径
-        header_color: 表头颜色
-
-    Returns:
-        bool: 是否成功
+    这是兼容旧调用方的 openpyxl 分支：先保存，再重新加载文件做样式
+    后处理。返回 bool 而不是路径，因为 filepath 由调用方提供，真正需要
+    判断的是保存和格式化是否都完成。
     """
     try:
         logger.info("[流式导出] 保存文件: %s", filepath)
@@ -280,21 +296,16 @@ def stream_finalize_and_format(workbook, worksheet, filepath, header_color='165D
 
 def export_dataframe_streaming(df, filepath, sheet_name='Sheet1', header_color=None,
                                batch_size=None, progress_callback=None):
-    """流式导出DataFrame到Excel（xlsxwriter引擎，高效版）
+    """流式导出DataFrame到Excel（xlsxwriter引擎，高效版）。
 
-    使用xlsxwriter引擎和write_row批量写入，避免cell-by-cell操作，
-    相比openpyxl版本快5-10倍。
-
-    Args:
-        df: pandas DataFrame
-        filepath: 文件路径
-        sheet_name: 工作表名称
-        header_color: 表头颜色（默认使用常量）
-        batch_size: 每批写入的行数（默认使用常量）
-        progress_callback: 进度回调函数 callback(current, total, message)
+    这是大表的主路径：xlsxwriter 直接用 write_row 写入分批规范化后的
+    行，避免 openpyxl 的逐 cell Python 调用。batch_size 只影响内存和
+    进度粒度，不改变数据单位或返回约定。与 export_with_format 相同，
+    先写目标目录中的临时文件，关闭 writer 后通过 os.replace 原子交付。
 
     Returns:
-        bool: 是否成功
+        bool: 仅当所有批次、格式、writer.close 和原子替换均成功时为 True；
+            异常时关闭 writer、删除临时文件并返回 False。
     """
     if batch_size is None:
         batch_size = EXCEL_BATCH_SIZE
@@ -306,6 +317,8 @@ def export_dataframe_streaming(df, filepath, sheet_name='Sheet1', header_color=N
     try:
         logger.info("[流式导出] 开始流式导出 %d 行数据...", len(df))
 
+        # 目标文件与临时文件同目录，才能保证 os.replace 是同一文件系统内
+        # 的原子替换；在 writer.close 前绝不触碰正式路径。
         fd, temp_path = tempfile.mkstemp(prefix='.nqi-', suffix='.xlsx', dir=os.path.dirname(filepath) or '.')
         os.close(fd)
         os.unlink(temp_path)
@@ -330,6 +343,9 @@ def export_dataframe_streaming(df, filepath, sheet_name='Sheet1', header_color=N
             'border': 1,
         })
 
+        # xlsxwriter 的 worksheet.write_row 接受一整行已规范化的值，适合
+        # 批量写入；openpyxl 分支则保留在 stream_write_row/batch 中，供
+        # 需要可编辑 Workbook 对象的旧调用方使用。
         # 写入表头
         headers = list(df.columns)
         for col_idx, col_name in enumerate(headers):

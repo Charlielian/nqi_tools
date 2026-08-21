@@ -61,7 +61,13 @@ def check_and_setup_credentials(parent=None):
 #       1. 主窗口布局构建 → gui/layout.py
 #       2. 计算列逻辑 → core/calculations.py（已在 gui/calculators/）
 class NqiToolGUI:
-    """NQI工具主窗口"""
+    """NQI 工具主窗口。
+
+    Tkinter 控件和变量只在主线程访问；登录、查询和 45G 合成在后台线程
+    执行，状态更新通过 ``root.after`` 回到主线程。查询选项之间存在互斥
+    关系：按日分 Sheet 与按日+按地市不能同时启用，单地市多线程也不能
+    与按日查询并用；合成 45G 使用周选择器，并独立于普通日期查询流程。
+    """
 
     def __init__(self, root, expiry_time=None, credentials=None):
         self.root = root
@@ -321,6 +327,7 @@ class NqiToolGUI:
         TABLE_CATEGORIES = {
             '干扰': ['5G干扰小区', '5G_干扰报表_自忙时', '4G干扰小区'],
             '容量': ['5G小区容量报表', '5G小区容量-周', '重要场景-天', '重要场景-周'],
+            '地市级': ['重要场景地市-天', '5G容量报表-地市级', '4G小区性能KPI报表-地市', '5G小区性能KPI报表-地市'],
             '工参': ['5G小区工参报表', '4G小区工参报表'],
             'MR覆盖': ['5GMR覆盖-小区天', '4GMR覆盖-小区天'],
             '语音报表': ['VoLTE小区监控预警', 'VONR小区监控预警', 'EPSFB小区监控预警'],
@@ -737,7 +744,12 @@ class NqiToolGUI:
         self.root.after(100, self._check_synthesize_mode)
 
     def _check_synthesize_mode(self):
-        """检查是否切换到合成45G流量表模式"""
+        """根据当前选择显示合成 45G 的周选择器。
+
+        该方法由下拉搜索事件延迟调用，避免控件尚未提交最终选择时重复
+        切换布局；完整的日期行隐藏/恢复由 ``_on_table_selection_changed``
+        处理，两个入口共同维护同一组界面状态。
+        """
         selected = self.table_dropdown.get_selected()
 
         # 检查是否选中了合成45G流量表
@@ -814,7 +826,11 @@ F1        - 显示此帮助
         self.log("已取消全选", "INFO")
 
     def _on_multi_day_toggle(self):
-        """按日查询切换事件"""
+        """切换按日模式及其互斥选项。
+
+        按日启用后允许分 Sheet/分地市，并强制关闭单地市多线程；关闭
+        按日时同时清除两个子选项，避免后台 worker 读取到矛盾组合。
+        """
         if self.multi_day_var.get():
             self.multi_day_per_sheet_cb.config(state=tk.NORMAL)
             self.multi_day_per_city_cb.config(state=tk.NORMAL)
@@ -1136,12 +1152,16 @@ F1        - 显示此帮助
                 self.log(f"选择结束日期: {selected_date}", "INFO")
 
     def update_progress(self, current, total, detail=""):
-        """更新进度条显示
+        """更新进度条显示。
+
+        worker 可能从后台线程调用，因此这里只计算轻量级进度和 ETA，真正
+        的控件更新通过 ``root.after`` 排队到 Tk 主线程。ETA 是基于最近
+        百分比变化的启发式估算，不能作为后端剩余任务的精确承诺。
 
         Args:
-            current: 当前进度（0-100）
-            total: 总数（用于计算百分比）
-            detail: 详细描述文字
+            current: 当前进度。
+            total: 总数（用于计算百分比）。
+            detail: 详细描述文字。
         """
         if total > 0:
             pct = int(current / total * 100)

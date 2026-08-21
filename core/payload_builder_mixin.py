@@ -15,16 +15,25 @@ logger = logging.getLogger(__name__)
 
 
 class PayloadBuilderMixin:
-    """Payload 构建方法"""
+    """构造 JXCX/DataTables 请求体。
+
+    字段配置既可由后端 search/table 接口动态取得，也可由报表配置直接
+    提供。构造结果保留服务端原始协议键名（包括 ``feild``），并把字段
+    元数据、维度、where 条件和 DataTables 参数放在同一个 payload 中。
+    """
 
     def get_field_config(self, table_key, fieldtype, api_type='search', table_name=None):
-        """动态获取表字段配置（从API获取）
+        """动态获取表字段配置（从 API 获取）。
+
+        search 接口按报表关键字查询字段元数据，table 接口按数据库表名
+        查询；任一接口返回空配置时切换到另一接口。结果按完整请求维度
+        缓存，避免每个报表日期任务重复访问元数据接口。
 
         Args:
-            table_key: API查询关键字或显示名称
-            fieldtype: 字段类型过滤条件
-            api_type: API类型，'search'使用adhocquery/search接口，'table'使用adhocquery/getSelectTable接口
-            table_name: 数据库表名（用于api_type='table'时）
+            table_key: API 查询关键字或显示名称。
+            fieldtype: 字段类型过滤条件（由上游协议保留）。
+            api_type: ``search`` 或 ``table``。
+            table_name: 数据库表名（table 模式使用）。
         """
         cache_key = f"{table_key}_{fieldtype}_{api_type}_{table_name or ''}"
         if cache_key in self._field_config_cache:
@@ -100,8 +109,15 @@ class PayloadBuilderMixin:
             return None
 
     def build_payload_from_config(self, table_key, fieldtype, where_conditions, api_type='search',
-                                  dimension_override=None, fields_override=None, table_name=None):
-        """从动态获取的字段配置构建payload"""
+                                  dimension_override=None, fields_override=None, table_name=None,
+                                  table_params=None, indexcount=0):
+        """从动态或预定义字段配置构建 JXCX payload。
+
+        ``tableParams`` 只覆盖服务端支持的维度元数据，``indexcount`` 则
+        原样写入协议字段，不能当作 DataTables 的 ``start``/``length``。
+        动态配置按 ``sort`` 排序，第一项提供默认维度字段；预定义字段
+        则绕过元数据请求，但仍生成完整的 columns/result/where 结构。
+        """
         converted_conditions = convert_where_conditions(where_conditions)
 
         if dimension_override:
@@ -125,13 +141,17 @@ class PayloadBuilderMixin:
             supporteddimension = None
             supportedtimedimension = ''
 
+        if table_params:
+            supporteddimension = table_params.get('supporteddimension', supporteddimension)
+            supportedtimedimension = table_params.get('supportedtimedimension', supportedtimedimension)
+
         if fields_override:
             logger.info("使用预定义的字段覆盖，共 %d 个字段", len(fields_override))
             return self._build_payload_with_field_configs(
                 table_key, fieldtype, converted_conditions, api_type,
                 geographicdimension, timedimension, enodeb_field, cgi_field,
                 time_field, cell_field, city_field, fields_override,
-                supporteddimension, supportedtimedimension
+                supporteddimension, supportedtimedimension, indexcount
             )
 
         logger.info("【字段配置】开始获取字段配置: table_key=%s, fieldtype=%s, api_type=%s, table_name=%s",
@@ -227,7 +247,7 @@ class PayloadBuilderMixin:
             'search': {'value': '', 'regex': False},
             'result': result,
             'where': converted_conditions,
-            'indexcount': 0
+            'indexcount': indexcount
         }
 
         logger.info("构建的payload包含 %d 个字段", len(columns))
@@ -292,7 +312,7 @@ class PayloadBuilderMixin:
     def _build_payload_with_field_configs(self, table_key, fieldtype, where_conditions, api_type,
                                          geographicdimension, timedimension, enodeb_field, cgi_field,
                                          time_field, cell_field, city_field, fields_override,
-                                         supporteddimension=None, supportedtimedimension=''):
+                                         supporteddimension=None, supportedtimedimension='', indexcount=0):
         """使用字段配置列表构建payload"""
         converted_conditions = convert_where_conditions(where_conditions)
 
@@ -352,7 +372,7 @@ class PayloadBuilderMixin:
             'search': {'value': '', 'regex': False},
             'result': result,
             'where': converted_conditions,
-            'indexcount': 0
+            'indexcount': indexcount
         }
 
         logger.info("使用字段配置构建payload，包含 %d 个字段", len(columns))

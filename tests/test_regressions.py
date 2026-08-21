@@ -143,6 +143,69 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(calendar.monthrange(2024, 1)[0], 0)
         self.assertEqual(calendar.monthrange(2024, 9)[0], 6)
 
+    def test_city_table_configs_are_registered_and_complete(self):
+        from gui.widgets import TableConfig
+
+        expected = {
+            "重要场景地市-天": ("appdbv3.a_overview_ispm_lte_city_d", "重要场景-地市天", 84),
+            "5G容量报表-地市级": ("appdbv3.a_adhoc_capacity_nr_city", "5G容量报表 - 地市级", 29),
+            "4G小区性能KPI报表-地市": ("appdbv3.a_common_pm_lte", "公共_4G小区性能KPI报表_小区", 10),
+            "5G小区性能KPI报表-地市": ("appdbv3.a_common_pm_sacu", "公共_5G小区性能KPI报表_小区", 8),
+        }
+        for name, (source_table, fieldtype, field_count) in expected.items():
+            config = TableConfig.get_table_config(name)
+            self.assertIsNotNone(config)
+            self.assertEqual(config["table_name"], source_table)
+            self.assertEqual(config["table_key"], fieldtype)
+            self.assertEqual(config["fieldtype"], fieldtype)
+            self.assertEqual(len(config["fields"]), field_count)
+            fields = [item["feild"] for item in config["fields"]]
+            self.assertEqual(len(fields), len(set(fields)))
+            self.assertIn("starttime", fields)
+            self.assertIn("city", fields)
+            self.assertEqual(config["indexcount"], 0)
+            self.assertEqual(config["tableParams"], {
+                "supporteddimension": config["tableParams"]["supporteddimension"],
+                "supportedtimedimension": config["tableParams"]["supportedtimedimension"],
+            })
+
+        city_kpi_fields = {
+            item["feild"] for item in TableConfig.get_table_config(
+                "5G小区性能KPI报表-地市"
+            )["fields"]
+        }
+        self.assertNotIn("endtime", city_kpi_fields)
+
+    def test_city_table_payload_preserves_fields_and_conditions(self):
+        from core.payload_builder_mixin import PayloadBuilderMixin
+        from gui.widgets import TableConfig
+
+        class Builder(PayloadBuilderMixin):
+            pass
+
+        config = TableConfig.get_table_config("5G小区性能KPI报表-地市")
+        payload = Builder().build_payload_from_config(
+            config["table_key"], config["fieldtype"],
+            [
+                {"field": "starttime", "operator": ">=", "value": "2026-08-18"},
+                {"field": "starttime", "operator": "<=", "value": "2026-08-18"},
+                {"field": "city", "operator": "in", "value": "广州,深圳"},
+            ],
+            config["api_type"], dimension_override=config["dimension"],
+            fields_override=config["fields"], table_name=config["table_name"],
+            table_params=config["tableParams"], indexcount=config["indexcount"],
+        )
+        columns = [column["data"] for column in payload["columns"]]
+        result = [item["feild"] for item in payload["result"]["result"]]
+        self.assertEqual(columns, result)
+        self.assertEqual(payload["indexcount"], config["indexcount"])
+        self.assertEqual(payload["result"]["tableParams"], config["tableParams"])
+        self.assertEqual(payload["geographicdimension"], config["dimension"]["geographicdimension"])
+        self.assertEqual(payload["cityField"], "city")
+        self.assertEqual(payload["where"][-1]["feild"], "city")
+        self.assertEqual(payload["where"][-1]["val"], "广州,深圳")
+        self.assertEqual(payload["where"][1]["val"], "2026-08-18 23:59:59")
+
     def test_vonr_warning_payload_contains_radio_call_metrics_once(self):
         from gui.field_configs import VONR_WARNING_FIELDS
         from gui.payload_templates import get_vonr_warning_payload

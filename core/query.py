@@ -42,7 +42,12 @@ logger = logging.getLogger(__name__)
 
 
 class JXCXQuery(SessionMixin, PayloadBuilderMixin, DataFetcherMixin, VoiceMergerMixin):
-    """即席查询类（聚合 Session/Payload/DataFetch/VoiceMerge mixin）"""
+    """即席查询门面。
+
+    该类只负责把 Session、payload、数据获取和语音合并 mixin 组合成兼容的
+    旧查询接口。主查询对象拥有登录态和取消标志；并行查询会复制 Cookie
+    与连接属性到每个线程的独立 Session，不共享连接池或字段配置缓存。
+    """
 
     def __init__(self, session):
         self.sess = session

@@ -97,15 +97,21 @@ class QueryWorker:
 
     def _query_worker_impl(self, table_names, start_date, end_date, city,
                            on_complete=None, on_failed=None):
-        """主查询工作流（原 NqiToolGUI._query_worker）
+        """主查询工作流（原 NqiToolGUI._query_worker）。
+
+        先快照 Tkinter 变量，再按模式优先级分流：单地市多表并行、4G
+        语音联合查询、硬编码 payload、工参 table 流程和动态字段流程。
+        按日、按日分 Sheet、按日+按地市是后续导出分支；它们共享取消
+        标志，但不会直接操作 Tkinter 控件。所有完成/失败通知都通过
+        ``after_func`` 投递回主线程。
 
         Args:
-            table_names: 要查询的表名列表
-            start_date: 开始日期
-            end_date: 结束日期
-            city: 地市字符串
-            on_complete: 完成回调（将在主线程执行）
-            on_failed: 失败回调（将在主线程执行）
+            table_names: 要查询的表名列表。
+            start_date: 开始日期。
+            end_date: 结束日期。
+            city: 地市字符串。
+            on_complete: 完成回调（将在主线程执行）。
+            on_failed: 失败回调（将在主线程执行）。
         """
         total_tables = len(table_names)
         def _snapshot(value, default):
@@ -420,7 +426,9 @@ class QueryWorker:
                 table_config['api_type'],
                 dimension_override=dimension if dimension else None,
                 fields_override=fields,
-                table_name=table_config.get('table_name')
+                table_name=table_config.get('table_name'),
+                table_params=table_config.get('tableParams'),
+                indexcount=table_config.get('indexcount', 0)
             )
             if payload:
                 df = self.jxcx.get_table(payload, report_name=table_name)
@@ -459,7 +467,9 @@ class QueryWorker:
             table_config['api_type'],
             dimension_override=dimension if dimension else None,
             fields_override=fields,
-            table_name=table_config.get('table_name')
+            table_name=table_config.get('table_name'),
+            table_params=table_config.get('tableParams'),
+            indexcount=table_config.get('indexcount', 0)
         )
 
         if payload:
@@ -523,7 +533,9 @@ class QueryWorker:
                     table_config['api_type'],
                     dimension_override=dimension if dimension else None,
                     fields_override=fields,
-                    table_name=table_config.get('table_name')
+                    table_name=table_config.get('table_name'),
+                    table_params=table_config.get('tableParams'),
+                    indexcount=table_config.get('indexcount', 0)
                 )
                 if not payload:
                     return None, None
@@ -661,7 +673,9 @@ class QueryWorker:
                         table_config['api_type'],
                         dimension_override=dimension if dimension else None,
                         fields_override=fields,
-                        table_name=table_config.get('table_name')
+                        table_name=table_config.get('table_name'),
+                        table_params=table_config.get('tableParams'),
+                        indexcount=table_config.get('indexcount', 0)
                     )
 
                 if not payload:

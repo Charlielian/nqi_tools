@@ -7,6 +7,10 @@
 计算规则：
 - 4G语音通话质差时长比例 = (VoLTE语音上行吞字时长+VoLTE语音上行单通时长+VoLTE语音上行断续时长+EPSFB语音上行吞字时长+EPSFB语音上行单通时长+EPSFB语音上行断续时长) / (VoLTE语音上行总时长+EPSFB语音上行总时长)
 - 4G差小区 = (VoLTE语音通话质差时长比例>2% 且 VoLTE通话次数>1000) 或者 (EPSFB语音通话质差时长比例>2% 且 EPSFB通话次数>1000)
+
+计算结果中的比例统一按百分数数值保存：2% 的阈值比较写成 ``> 2``，
+而不是把已经乘过100的结果再与0.02比较。缺字段时模块保守地记录告警，
+不伪造指标，最终仍返回传入的 DataFrame 对象。
 """
 
 import numpy as np
@@ -20,6 +24,9 @@ def _detect_voice_columns(df):
     Returns:
         dict: 包含所有识别的字段列名
     """
+    # 先识别列名而不是假设固定模板：后端既可能返回中文展示名，也可能
+    # 返回旧版英文物理字段名。识别结果只保存“实际列名”，后续计算才
+    # 能在不改动源表列顺序的情况下兼容两种协议。
     # 中文匹配
     volte_ul_tunzi = None
     volte_ul_dantong = None
@@ -122,14 +129,20 @@ def _detect_voice_columns(df):
 
 
 def add_4g_voice_calc_columns(df, log_func=None):
-    """添加4G语音小区计算列
+    """添加4G语音小区计算列。
+
+    语音时长字段的物理单位是秒，通话次数是次数；比例计算时分子分母
+    使用相同的秒单位，单位相消后乘100得到百分数。NaN 业务上按0参与
+    时长/次数求和，但当总时长为0时结果保留 NaN，避免把“没有可计算
+    样本”误判为正常质量。只有比例超过2且通话次数超过1000才标记
+    VoLTE/EPSFB 差小区，两个制式任一满足即可标记最终结果。
 
     Args:
         df: 合并后的DataFrame
         log_func: 可选的日志回调函数，签名 log_func(message, level)
 
     Returns:
-        DataFrame: 添加了计算列的DataFrame
+        DataFrame: 原对象上添加计算列后的DataFrame
     """
     if log_func is None:
         log_func = lambda msg, level='INFO': None
@@ -162,7 +175,9 @@ def add_4g_voice_calc_columns(df, log_func=None):
     if missing_fields:
         log_func(f"[4G语音计算] 缺失字段: {missing_fields}", "WARNING")
 
-    # 计算4G语音通话质差时长比例
+    # 质差时长比例的单位是百分数：总时长大于0才有分母。这里使用
+    # fillna(0) 处理缺测片段，但不把总时长为0的行写成0%，而是写成
+    # NaN，供上层区分“无样本”和“确实没有质差时长”。
     if all(cols[k] is not None for k in [
         'volte_ul_tunzi', 'volte_ul_dantong', 'volte_ul_duanxu',
         'volte_ul_sum', 'epsfb_ul_tunzi', 'epsfb_ul_dantong',

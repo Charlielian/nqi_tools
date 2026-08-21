@@ -43,6 +43,7 @@ from gui.payload_templates import (
     get_common_pm_cell_day_v3_payload,
     get_sectors_4g_5g_payload,
 )
+from gui.city_table_configs import CITY_TABLE_CONFIGS
 
 
 class LogTextHandler(logging.Handler):
@@ -284,7 +285,12 @@ class DateEntry(ttk.Entry):
 
 
 class MultiSelectDropdown(ttk.Frame):
-    """带复选框的下拉选择组件（支持下拉滚动）"""
+    """带复选框和滚动区域的下拉选择组件。
+
+    复选框变化只更新临时选择顺序，点击“确定”才更新显示值并触发业务
+    回调；``set_selected`` 用于程序回填，不触发该回调。选择超过三项时
+    只显示数量，内部仍保留完整的值列表。
+    """
 
     # TODO: 广东地市列表硬编码在此，应改为配置项（config.yaml 或 YAML 配置）以便扩展
     GD_CITIES = ['广州', '深圳', '东莞', '佛山', '中山', '珠海', '江门', '肇庆',
@@ -991,6 +997,9 @@ class TableConfig:
             'dimension': SYNTHESIZE_45G_CONFIG['dimension'],
         },
     }
+
+    # 地市级报表配置单独维护，避免继续扩张本模块的主配置字典。
+    TABLE_CONFIGS.update(CITY_TABLE_CONFIGS)
 
     # YAML加载器单例（已禁用，保留引用避免其他模块报错）
     _yaml_loader = None

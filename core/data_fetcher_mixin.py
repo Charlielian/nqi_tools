@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 class DataFetcherMixin:
-    """Data fetch methods"""
+    """Data fetch methods.
+
+    JXCX 将 ``getTableCount`` 与 ``getTable`` 作为两步协议：先用裁剪后的
+    payload 估算行数，再按 ``start/length`` 分页取数。这里保留多种响应字段
+    和失败回退，是为了兼容不同报表后端及 DataTables 风格，而不是因为所有
+    接口都同时返回这些字段。
+    """
 
     def get_table_count(self, payload, retry_times=None, retry_delay=None, report_name=None):
         """获取查询结果行数（使用指数退避重试）
@@ -52,7 +58,10 @@ class DataFetcherMixin:
         if not self.enabled:
             self.enter_jxcx()
 
-        # getTableCount请求只需要这些参数（与浏览器保持一致，不包含columns/order/search）
+        # count接口只接受查询维度、where和字段result；columns/order/search是
+        # getTable 的 DataTables 参数，混入 count 请求会导致部分报表返回异常。
+        # count 失败时使用 MAX_SINGLE_QUERY，故意让后续 getTable 继续尝试，
+        # 避免把“统计接口故障”误报成“查询结果为空”。
         key_list = ['geographicdimension', 'timedimension', 'enodebField', 'cgiField',
                     'timeField', 'cellField', 'cityField', 'result', 'where', 'indexcount']
         payload_count = {key: value for key, value in payload.items() if key in key_list}
@@ -188,7 +197,8 @@ class DataFetcherMixin:
         Returns:
             count值或None（如果未找到）
         """
-        # 位置1: result['count']
+        # count响应在不同接口中可能位于顶层、data对象或DataTables字段；按
+        # 稳定性从专用字段到通用字段尝试，避免仅依赖某一个版本的响应包装。
         if 'count' in result:
             return result['count']
 
@@ -356,7 +366,8 @@ class DataFetcherMixin:
         """
         logger.debug("开始获取数据，预期总量: %d", total_count)
 
-        BATCH_SIZE = 50000  # 每批最多50000条
+        BATCH_SIZE = 50000  # 后端和内存之间的折中阈值；取消只在批次边界轮询，
+        # 因而不会强行中断已经发出的 HTTP 请求。
         all_data = []
 
         if total_count <= BATCH_SIZE:
@@ -460,6 +471,8 @@ class DataFetcherMixin:
             logger.warning("payload中缺少result字段")
             return pd.DataFrame()
 
+        # 上游字段元数据使用 feild/feildName（原始拼写），先拼成一行
+        # 临时数据，get_table 再把它转成 DataFrame 的真实列名并删除该行。
         result_list = payload['result']['result']
         result_df = pd.DataFrame(result_list)
 
@@ -470,13 +483,19 @@ class DataFetcherMixin:
         return pd.DataFrame([en_zh_dict])
 
     def get_table(self, payload, to_df=True, progress_callback=None, report_name="未知报表"):
-        """获取表格数据（一次性获取全部数据）
+        """执行完整的 JXCX 查询并返回全部结果。
+
+        先验证模块和 Session，再通过 ``getTableCount`` 确定分页规模，随后
+        用完整 DataTables payload 获取数据。count 为零时仍保留一次
+        ``getTable`` 兜底，因为部分周粒度或旧报表的统计接口并不可靠。
+        返回 DataFrame 时会暂时用 payload 中的 ``feild``/``feildName``
+        生成中文列名；非 DataFrame 模式保持 ``{'data': [...]}`` 契约。
 
         Args:
-            payload: 请求参数
-            to_df: 是否转换为DataFrame
-            progress_callback: 进度回调函数，签名: callback(current, total, message)
-            report_name: 报表名称（用于日志标识）
+            payload: 请求参数。
+            to_df: 是否转换为 DataFrame。
+            progress_callback: callback(current, total, message)。
+            report_name: 报表名称（用于日志标识）。
         """
         import pandas as pd
 

@@ -13,9 +13,11 @@ from gui.theme import colors, fonts, spacing
 
 
 class SearchableCombobox(ttk.Frame):
-    """带搜索功能的组合框
+    """带搜索功能的组合框。
 
-    支持实时过滤下拉选项，适合大量选项（如20+报表）
+    搜索框和下拉窗口共享过滤文本；过滤后 Listbox 的索引只对应当前
+    可见结果，不是原始 ``values`` 的索引。实际选择在双击或回车时提交，
+    此时才触发业务回调。
     """
 
     def __init__(self, parent, values: List[str], width: int = 25,
@@ -200,7 +202,12 @@ class SearchableCombobox(ttk.Frame):
 
 
 class CalendarDialog(tk.Toplevel):
-    """日历选择对话框"""
+    """模态日历选择对话框。
+
+    ``grab_set`` 限制交互在当前弹窗内，调用方通过 ``show`` 的
+    ``wait_window`` 等待关闭后读取 ``selected_date``。日期解析失败时
+    回退到当前月份；日历网格直接使用 ``monthrange`` 返回的周一到周日索引。
+    """
 
     def __init__(self, parent, initial_date: str = "", title: str = "选择日期"):
         super().__init__(parent)
@@ -377,9 +384,11 @@ class CalendarDialog(tk.Toplevel):
 
 
 class ValidationEntry(ttk.Entry):
-    """带验证功能的输入框
+    """带验证功能的输入框。
 
-    支持实时验证和错误提示
+    validator 接收当前字符串并返回真值；按键时更新内部有效状态，失去
+    焦点时才显示错误文字。没有 validator 时不拦截输入，空值也由具体
+    validator 决定是否有效。
     """
 
     def __init__(self, parent, validator: Optional[Callable] = None,

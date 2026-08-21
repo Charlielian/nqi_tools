@@ -1,11 +1,22 @@
 # -*- coding: utf-8 -*-
 """
 硬编码Payload模板模块
-基于旧版脚本nqi_tools旧版.py中的payload函数，完全硬编码所有参数
+基于旧版脚本nqi_tools旧版.py中的payload函数，完全硬编码所有参数。
+
+这些字典不是普通的前端筛选参数，而是后端即席查询接口约定的请求体：
+字段描述、查询条件、分页、排序和维度元数据共同决定后端如何拼接查询。
+模板中的拼写（例如 feild）和看似冗余的空值也要保持，因为它们来自浏览器
+HAR 中实际发送的协议结构。以下注释解释 HAR 与后端协议的原因，不逐项
+复述每个报表的字段模板。
 """
 
 def _build_columns_param(field_list):
-    """构建DataTables格式的columns参数（与浏览器HAR格式一致）"""
+    """构建 DataTables ``columns`` 参数。
+
+    这是浏览器 HAR 中 DataTables 请求的一部分，而不是仅供本地展示的
+    列名列表。后端会据此判断字段是否可搜索、可排序，并要求每项带有
+    search 子对象；即使 value 为空、name 为空也应保留协议形状。
+    """
     columns = []
     for field in field_list:
         columns.append({
@@ -19,8 +30,13 @@ def _build_columns_param(field_list):
 
 
 def _build_result_fields(fields_config, fieldtype, table_name, fixed_datatype_fields=None):
-    """构建result字段列表
-    
+    """构建 result 字段列表。
+
+    ``result`` 是 HAR 请求中描述查询结果的协议元数据，不是 pandas 的
+    dtype 列表。后端会读取字段名、展示名、表名、datatype 和 columntype
+    来生成查询及返回结构，因此即使 ``feild`` 是历史拼写、某些元数据看似
+    冗余，也必须保持与协议一致；这里仅解释公共构造规则，不逐项复述模板。
+
     Args:
         fields_config: 字段配置列表，每个元素是(feild, feildName)元组或dict
         fieldtype: 字段类型

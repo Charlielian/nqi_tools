@@ -13,10 +13,20 @@ logger = logging.getLogger(__name__)
 
 
 class VoiceMergerMixin:
-    """4G 语音合并查询方法"""
+    """4G 语音合并查询方法。
+
+    VoLTE 与 EPSFB 是两个独立后端报表，结果按时间和小区标识做外连接；
+    有键时保留任一报表出现的记录，无键时退化为纵向 concat，避免凭空
+    猜测关联关系。返回值同时保留两个原始 DataFrame 和 merged 结果。
+    """
 
     def get_4g_voice_table(self, volte_payload, epsfb_payload, to_df=True):
-        """获取4G语音小区报表数据（VoLTE+EPSFB联合）"""
+        """查询并合并 VoLTE/EPSFB 预警数据。
+
+        ``to_df=True`` 返回合并后的 DataFrame；否则返回旧接口要求的
+        ``{'data': records}``。内部结果还会保留两个原始报表，便于日志和
+        后续计算区分两个制式的数据来源。
+        """
         result = self._get_4g_voice_table_internal(volte_payload, epsfb_payload)
         if to_df:
             return result['merged']

@@ -132,7 +132,12 @@ HEADER_COLORS = {
 
 
 class ThemeManager:
-    """主题管理器 - 支持主题切换"""
+    """主题名称管理器。
+
+    当前实现只记录 ``light``/``dark`` 名称；``set_theme`` 不会替换全局
+    ``colors``、``fonts`` 或其他样式实例，因此调用它并不会真正应用暗色
+    主题。保留该边界可避免新增界面误以为已经完成全局换肤。
+    """
 
     _current_theme = 'light'
 

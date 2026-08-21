@@ -2,6 +2,18 @@
 """
 45G流量表合成模块
 负责从大数据平台下载数据并合成45G容量表
+
+处理链路说明：
+    1. 先按周起止日期和地市构造查询条件，下载八类源表；
+    2. 以5G/4G周容量表分别作为主表，再把天粒度、MR、KPI及共站同覆盖
+       数据按小区标识关联并聚合；
+    3. 对流量系数、长尾和负荷等派生指标执行业务阈值判断；
+    4. 将5G和4G结果统一为“网络制式 + CGI/NCGI”结构，合并成45G总表，
+       最后输出单独的5G、4G和45G文件。
+
+这里的“45G”是4G与5G容量结果的合称，并不是第五代网络。各源表的
+字段名称、粒度和单位可能不同，下面的注释重点说明它们如何在合成阶段
+对齐，而不重复报表模板中的全部字段。
 """
 
 import os
@@ -70,11 +82,19 @@ class FlowTableBuilder:
     
     def __init__(self, session, city, week_start_date, progress_callback=None):
         """
+        初始化一次45G合成任务的上下文。
+
         Args:
-            session: 已登录的requests Session
-            city: 地市列表，逗号分隔
-            week_start_date: 周开始日期（周一），datetime对象
-            progress_callback: 进度回调函数 callback(message, progress_percent)
+            session: 已登录的requests Session。它代表主线程的登录态，后续
+                下载线程只复制其 cookies 和连接属性，不直接共享这个对象。
+            city: 地市列表，逗号分隔；会原样传给后端 payload 的 city 条件。
+            week_start_date: 周开始日期（周一），datetime对象；结束日由此
+                顺延六天，查询窗口按 YYYY-MM-DD 传递给源表接口。
+            progress_callback: 进度回调函数 callback(message, progress_percent)。
+
+        合成结果保存在 self.data 中，键是源表名称，值是 DataFrame。这个
+        显式的中间层使“下载源表”和“构建容量表”分离，也便于源表缺失时
+        只跳过对应关联而不改变其他已下载数据。
         """
         self.session = session
         self.city = city
@@ -119,13 +139,19 @@ class FlowTableBuilder:
         return output_dir
     
     def _download_single_table(self, table_name):
-        """下载单个数据表（用于并行下载）
+        """下载单个数据表（用于并行下载）。
+
+        每个任务都是一个独立的后端查询会话：requests.Session 不能安全地
+        被多个线程同时复用，因此这里只复制登录 cookies、headers 等连接
+        配置。这样既保留登录态，又避免一个线程修改连接状态时影响其他
+        源表请求。
 
         Args:
-            table_name: 表名
+            table_name: 表名。
 
         Returns:
-            dict: 包含 table_name, df, success, error_message 的结果字典
+            dict: 包含 table_name、df、success、error_message 的结果字典。
+                df 为空或查询失败时仍返回结构化结果，供主线程记录失败原因。
         """
         # 为每个线程创建独立的requests.Session（复制cookies，避免并发共享同一Session）
         import requests as req
@@ -208,10 +234,16 @@ class FlowTableBuilder:
         import time
         download_start = time.time()
         
-        # 并行下载
-        # TODO: max_workers=4 硬编码，应统一从配置/系统资源获取
+        # 45G合成不是只查一张表：每个源表的字段、时间粒度和单位由其
+        # payload 决定，先完整下载再在本地按 CGI/NCGI 做关联。payload
+        # 函数历史上存在有参/无参两种签名，反射只负责兼容这层调用约定，
+        # 不改变后端协议内容。
+        # 这里固定四个 worker 是为了让八个独立查询并发执行；Session
+        # 已在 _download_single_table 内按线程拆分，不能把主 Session
+        # 直接作为共享客户端传入。
         with ThreadPoolExecutor(max_workers=4) as executor:
-            # 提交所有下载任务
+            # 提交所有下载任务；future 与表名的反向索引让主线程能在
+            # as_completed 返回乱序结果时，仍准确记录对应源表。
             future_to_table = {
                 executor.submit(self._download_single_table, table_name): table_name
                 for table_name in SYNTHESIZE_45G_TABLES
@@ -249,7 +281,7 @@ class FlowTableBuilder:
         if failed_tables:
             self._log(f"失败列表: {[t[0] for t in failed_tables]}", 'warning')
 
-        return success_count >= 4  # 至少需要4个核心表
+        return success_count >= 4  # 至少需要4个核心表；缺少较边缘的源表时，仍允许合成可用结果
     
     def _normalize_datetime(self, series):
         """标准化日期时间列"""
@@ -398,7 +430,14 @@ class FlowTableBuilder:
             return numerator.div(denominator)
     
     def build_5g_table(self):
-        """构建5G合成容量表"""
+        """构建5G合成容量表。
+
+        以5G周容量表为主键骨架，天表按 NCGI 聚合日均/忙时指标，MR 表
+        聚合采样点和覆盖率，KPI 表补充 VoNR 话务量，最后使用 left join
+        保留周表中的小区全集。天表的流量字段单位是 G，利用率字段通常是
+        百分数数值（例如 20 表示20%）；这里保持源表单位，不在合成阶段
+        额外乘除100，避免与后续阈值口径错位。
+        """
         self._log("-" * 60)
         self._log("开始构建5G容量表")
         
@@ -422,7 +461,9 @@ class FlowTableBuilder:
                 ncgi_col = c
                 break
         
-        # 天数据聚合
+        # 天数据不是简单追加：同一小区会有多天记录，先按 NCGI 聚合为
+        # 一行。mean 用于日均流量、忙时利用率、PRB/CCE 和连接数等指标；
+        # 忙时上下行流量仍按源表的 G 单位聚合，随后才相加得到总流量。
         day_ncgi_col = None
         for c in ['NCGI', 'ncgi']:
             if day_df is not None and c in day_df.columns:
@@ -497,10 +538,12 @@ class FlowTableBuilder:
             if '自忙时上行流量' in day_group.columns and '自忙时下行流量' in day_group.columns:
                 day_group['自忙时总流量'] = day_group['自忙时上行流量'].fillna(0) + day_group['自忙时下行流量'].fillna(0)
             
-            # 工作日/周末聚合
+            # 5G 工作日/周末是同一份天表的两个切片，分别按 NCGI 求均值后
+            # 回连到日聚合结果；缺少日期列时，加载阶段会提供全为 False
+            # 的标记，因此不会把记录错误地归入周末。
             weekday_df = day_df[~day_df.get('是否周末', pd.Series([False]*len(day_df)))]
             weekend_df = day_df[day_df.get('是否周末', pd.Series([False]*len(day_df)))]
-            
+
             if not weekday_df.empty and traffic_col:
                 weekday_agg = {
                     '工作日自忙时利用率': (util_col_5g, 'mean') if util_col_5g else ('记录开始时间', 'count'),
@@ -557,6 +600,10 @@ class FlowTableBuilder:
                     ta_col = c
                     break
             
+            # 5G MR 是采样记录级数据，不能按行直接拼接；这里按小区汇总，
+            # 同时保留平均采样点、总采样点和强覆盖采样点，以便覆盖率
+            # 使用“强于110采样点合计 / 总采样点合计”计算。平均TA的单位
+            # 是米，导出时保持该物理单位，不与百分比字段混用。
             mr_agg = {}
             if sample_col:
                 mr_agg['MRO移动总采样点'] = (sample_col, 'mean')

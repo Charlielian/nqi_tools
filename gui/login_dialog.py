@@ -16,7 +16,13 @@ from utils.crypto import rsa_encrypt
 
 
 class LoginDialog:
-    """登录对话框 - 处理验证码和短信验证"""
+    """图形登录状态机。
+
+    图形验证码通过后才允许发送短信，最终以 CASTGC Cookie 判定登录成功；
+    HTTP 200 只代表请求有响应，不能替代接口返回的业务标志。当前网络
+    请求仍在 Tk 主线程事件回调中执行，``verify=False`` 只是企业证书兼容
+    的技术债务，不构成安全传输保证。
+    """
 
     def __init__(self, parent, username, password, session):
         self.username = username
@@ -317,6 +323,7 @@ class LoginDialog:
 
             res_login = self.sess.post(LOGIN_URL, data=login_data, headers=HEADERS)
 
+            # 登录 POST 的状态码不是最终判据；CASTGC 才表示统一认证已完成。
             if self.sess.cookies.get('CASTGC'):
                 self.msg_code = msg_code
                 self.result = True

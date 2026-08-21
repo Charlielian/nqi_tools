@@ -22,7 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 class LoginManager:
-    """登录管理器"""
+    """登录管理器。
+
+    登录分为复用 Cookie、图形验证码、短信验证码和 CASTGC 成功判定几个
+    状态阶段。HTTP 200 只说明请求被服务器处理，不能替代业务成功标志；
+    当前实现还保留了 verify=False 的企业证书兼容方案，部署时应视为安全
+    技术债务而不是安全存储或安全传输保证。
+    """
 
     def __init__(self, username=None, password=None, parent=None):
         self.username = username or DEFAULT_USERNAME
@@ -80,6 +86,8 @@ class LoginManager:
         if saved_cookie:
             self.sess.cookies = saved_cookie
             if self._check_session():
+                # 保存的 Cookie 只有通过登录接口返回的 loginId 校验才可复用；
+                # Cookie 存在或 HTTP 200 本身都不足以证明仍是当前用户的有效会话。
                 print("✓ 使用保存的Cookie登录成功！")
                 return self.sess
             else:
@@ -144,7 +152,13 @@ class LoginManager:
         return result
 
     def _login_with_input(self, attempt=0):
-        """使用命令行输入进行登录验证"""
+        """使用命令行输入进行登录验证。
+
+        先从登录页提取 execution 和 RSA 公钥，再循环处理图形验证码；
+        验证码通过后首个完整尝试发送短信，最终以 CASTGC Cookie 判定
+        登录成功。图形验证码和短信验证码是两个独立阶段，不能用前一阶段
+        的 HTTP 状态码跳过后一阶段。
+        """
         from utils.config import CAPTCHA_DIR
         from utils.logger import ensure_dirs
 
@@ -182,6 +196,8 @@ class LoginManager:
 
                 if res.status_code == 200:
                     result = json.loads(res.text)
+                    # 图形验证码接口的 code=1 才表示该阶段通过；普通 200
+                    # 只表示服务端返回了响应，不能直接进入短信登录阶段。
                     if result.get('code') == '1':
                         print(f"✓ 图形验证码验证通过（尝试次数: {i+1}）")
                         break
@@ -216,6 +232,8 @@ class LoginManager:
 
             res_login = self.sess.post(LOGIN_URL, data=login_data, headers=HEADERS)
 
+            # CASTGC 是统一认证成功后的业务 Cookie；登录 POST 即使返回 200，
+            # 没有该 Cookie 也只能视为验证码或认证流程失败。
             if self.sess.cookies.get('CASTGC'):
                 return True
             else:

@@ -72,14 +72,19 @@ def get_cookie_value(cookie_jar, name, domain=None):
 
 
 def convert_where_conditions(conditions):
-    """转换where条件格式为API要求的格式
+    """将调用方条件转换为 NQI ``where`` 协议。
+
+    调用方可继续传入旧版已经包含 ``feild/symbol/val`` 的条件，也可使用
+    更易读的 ``field/operator/value`` 形式；旧格式必须原样保留，因为
+    ``feild`` 是上游接口的既有拼写。日期边界会补齐为当天的起止时间，
+    并把 ``<=`` 改写为开区间 ``<``，这是浏览器请求与后端时间比较规则的
+    兼容处理，而不是通用的 Python 条件求值。
 
     Args:
-        conditions: 新格式条件列表 [{'field': 'xxx', 'operator': '>=', 'value': 'xxx'}]
-                   或旧格式条件列表 [{'feild': 'xxx', 'symbol': '>=', 'val': 'xxx'}]
+        conditions: 新格式条件列表，或旧格式 API 条件列表。
 
     Returns:
-        转换后的条件列表
+        转换后的条件列表；空输入返回空列表，无法识别的条件仅记录警告并跳过。
     """
     if not conditions:
         return []

@@ -12,7 +12,12 @@ from utils.config import get_app_path
 
 
 class FirstRunWizard:
-    """首次运行引导向导"""
+    """首次运行凭证配置向导。
+
+    有父窗口时使用模态 Toplevel 并等待关闭；保存时只更新 YAML 的
+    ``auth`` 节点，保留其他配置。当前实现把用户名和密码明文写入
+    ``config.yaml``，界面中的“安全存储”不能理解为加密存储。
+    """
 
     def __init__(self, parent=None):
         self.result = None
@@ -128,7 +133,8 @@ class FirstRunWizard:
             config['auth']['username'] = username
             config['auth']['password'] = password
 
-            # 写入配置
+            # 写入配置。这里没有加密或系统密钥环保护，保存的是明文 YAML；
+            # 但只更新 auth 节点，避免覆盖用户已有的其他配置项。
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
 

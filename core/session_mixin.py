@@ -17,17 +17,27 @@ logger = logging.getLogger(__name__)
 
 
 class SessionMixin:
-    """Session/连接管理方法"""
+    """Session/连接管理方法。
+
+    JXCX 的登录态由主站 Cookie 提供，其中 CASTGC 只是进入模块的前提；
+    真正可用性还要通过 urlAction.action 访问即席查询入口确认。取消标志
+    只负责让查询在请求边界主动收尾，不会强行终止正在执行的 requests 调用。
+    """
 
     def check_session_valid(self):
         """检查Session是否有效，以及JXCX模块是否可访问
 
         Returns:
-            bool: True表示Session有效且JXCX可用，False表示无效或已过期
+            bool: True 表示 Session 有效且 JXCX 可用，False 表示无效或已过期。
+
+        CASTGC 只证明仍持有统一认证票据；这里还要访问实际的
+        ``urlAction.action`` 入口，成功仅代表模块入口可达，不代表后续
+        count/getTable 业务请求一定成功。
         """
         import random
         try:
-            # 首先检查 CASTGC cookie 是否存在
+            # CASTGC 证明仍持有统一认证票据，但不等于 JXCX 页面可访问；
+            # 因此必须访问真实的 urlAction.action 入口，而不是只检查首页。
             castgc = get_cookie_value(self.sess.cookies, 'CASTGC', domain='nqi.gmcc.net')
             if not castgc:
                 castgc = get_cookie_value(self.sess.cookies, 'CASTGC')
@@ -51,6 +61,8 @@ class SessionMixin:
             res = self.sess.get(url_with_params, headers=HEADERS, timeout=TIMEOUT_SHORT)
 
             if res.status_code == 200:
+                # 该入口返回 200 即表示当前 Session 能进入 JXCX；后续真正
+                # 的 getTable 请求仍可能失败，调用方不能把这里当作数据成功。
                 logger.info("[Session检测] JXCX模块可访问，Session有效")
                 return True
             else:
@@ -118,7 +130,9 @@ class SessionMixin:
             new_cookie_names = [name for name, _ in new_cookies]
             logger.info("检测到新Cookie: %s", new_cookie_names)
 
-        # 检查最终URL是否到达目标页面
+        # 成功判定采用三层启发式：重定向后的目标 URL 最可靠，其次是
+        # 200 响应正文中的即席查询标识，最后兼容只更新 JSESSIONID 的旧环境。
+        # 这些信号用于恢复模块状态，不代表业务数据已经返回。
         final_url = res.url if hasattr(res, 'url') else ''
         if 'pro-adhoc' in final_url or 'index' in final_url:
             logger.info("成功到达即席查询页面: %s", final_url[:100])

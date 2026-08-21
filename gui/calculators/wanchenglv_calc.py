@@ -5,7 +5,7 @@
 从 main_window.py 的 _add_4g_wanchenglv_calc_columns / _add_5g_wanchenglv_calc_columns 提取，
 纯函数，与 GUI 解耦。
 
-计算规则（4G）：
+计算规则（4G）:
 - 4G无线接通率(%) = (RRC连接建立成功次数/RRC连接建立请求次数) * (E-RAB建立成功数/E-RAB建立请求数)
 - 4G切换成功率(%) = 切换成功次数/切换请求次数
 - 4G E-RAB掉线率(%) = (切出失败的E-RAB数 - 正常的eNB请求释放的E-RAB数 + eNB请求释放的E-RAB数)
@@ -13,7 +13,7 @@
 - 4G全程完好率(%) = 4G无线接通率(%) * 4G切换成功率(%) * (100 - 4G E-RAB掉线率(%))
 - 4G是否差小区 = 全程完好率 < 85% 时为"是"
 
-计算规则（5G）：
+计算规则（5G）:
 - SA无线接通率(%) = (RRC连接建立成功次数/RRC连接建立请求次数) * (Flow建立成功数/Flow建立请求数)
                     * (NG接口UE相关逻辑信令连接建立成功次数/NG接口UE相关逻辑信令连接建立请求次数)
 - SA无线掉线率(%) = (gNB请求释放上下文数 - 正常的gNB请求释放上下文数)
@@ -22,6 +22,10 @@
                     / (gNB间NG切换出准备请求次数 + gNB间Xn切换出准备请求次数 + CU内DU间切换出执行请求次数 + CU内DU内切换出执行请求次数)
 - 5G全程完好率(%) = SA无线接通率(%) * SA切换成功率(%) * (100 - SA无线掉线率(%))
 - 5G是否差小区 = 全程完好率 < 85% 时为"是"
+
+所有百分比列都保存为百分数数值而非0到1的小数；因此最终完好率的乘法
+仍按百分数业务公式执行，85是85%的阈值。分母为0时返回 NaN，避免
+用无效样本制造虚假的高完好率。
 """
 
 import numpy as np
@@ -68,14 +72,11 @@ _5G_FIELD_MAP = {
 
 
 def _build_field_map(df, mapping_table):
-    """根据列名在映射表中查找，构建 列名 -> 标准key 的映射
+    """根据列名别名构建标准 key 到实际列名的映射。
 
-    Args:
-        df: DataFrame
-        mapping_table: 元组(add key) 到 标准key 的字典
-
-    Returns:
-        dict: 标准key -> 实际列名
+    后端字段可能使用英文物理名或中文展示名；映射只解决协议命名差异，
+    不转换原始计数的单位，也不改变 DataFrame。后续公式统一引用标准 key，
+    这样计算规则不必为每一种报表模板复制一份。
     """
     field_map = {}
     for col in df.columns:
@@ -88,16 +89,11 @@ def _build_field_map(df, mapping_table):
 
 
 def _calc_ratio(df, num_cols, denom_cols, precision=4):
-    """计算比率列（百分数）
+    """计算百分数比率。
 
-    Args:
-        df: DataFrame
-        num_cols: 分子列名列表
-        denom_cols: 分母列名列表
-        precision: 保留小数位数
-
-    Returns:
-        Series: 比率值，分母为0时为NaN
+    分子和分母都是次数型计数，先把缺测当作0参与汇总，再以分母大于0
+    作为有效性门槛，最后乘100得到百分数。precision 参数保留在接口中
+    以兼容调用方；具体结果列由调用处统一 round。
     """
     numerator = sum(df[c].fillna(0).astype(float) for c in num_cols)
     denominator = sum(df[c].fillna(0).astype(float) for c in denom_cols)
@@ -105,14 +101,19 @@ def _calc_ratio(df, num_cols, denom_cols, precision=4):
 
 
 def add_4g_wanchenglv_calc_columns(df, log_func=None):
-    """添加4G全程完好率计算列
+    """添加4G全程完好率计算列。
+
+    各项接通/切换/掉线指标先按计数比率转换为百分数，再按业务公式
+    计算全程完好率。由于中间指标是百分数，最终公式中的 ``100 - 掉线率``
+    表示剩余可用百分点评分；低于85才标记差小区。缺失前置列时只记录
+    警告并跳过对应派生列，返回原 DataFrame，便于不完整源表继续导出。
 
     Args:
         df: 4G全程完好率报表的DataFrame
         log_func: 可选的日志回调函数，签名 log_func(message, level)
 
     Returns:
-        DataFrame: 添加了计算列的DataFrame
+        DataFrame: 原对象上添加计算列后的DataFrame
     """
     if log_func is None:
         log_func = lambda msg, level='INFO': None
@@ -120,7 +121,9 @@ def add_4g_wanchenglv_calc_columns(df, log_func=None):
     field_map = _build_field_map(df, _4G_FIELD_MAP)
     log_func(f"[4G全程完好率] 字段映射: {list(field_map.keys())}", "INFO")
 
-    # ========== 1. 计算4G无线接通率(%) ==========
+    # 4G 无线接通率是 RRC 接通率与 E-RAB 接通率的乘积；两者本身
+    # 都是百分数，乘积后仍按现有业务口径保留数值，不转回0到1。
+    # 分母为0的行保留 NaN，避免“没有请求”被误算为100%。
     if all(k in field_map for k in ['rrc_succ', 'rrc_att', 'erab_succ', 'erab_att']):
         rrc_succ = df[field_map['rrc_succ']].fillna(0).astype(float)
         rrc_att = df[field_map['rrc_att']].fillna(0).astype(float)
@@ -194,14 +197,20 @@ def add_4g_wanchenglv_calc_columns(df, log_func=None):
 
 
 def add_5g_wanchenglv_calc_columns(df, log_func=None):
-    """添加5G全程完好率计算列
+    """添加5G全程完好率计算列。
+
+    SA 接通率由 RRC、Flow 和 NG 信令三段成功率相乘；掉线率和切换
+    成功率分别使用对应的上下文/切换计数合计。所有比率统一存成百分数，
+    ``< 85`` 是85%的业务阈值。任一必要分母没有有效请求时写 NaN，
+    不把缺失数据当作成功；日志会指出缺失标准 key，调用方仍可继续处理
+    其他可计算列。
 
     Args:
         df: 5G全程完好率报表的DataFrame
         log_func: 可选的日志回调函数，签名 log_func(message, level)
 
     Returns:
-        DataFrame: 添加了计算列的DataFrame
+        DataFrame: 原对象上添加计算列后的DataFrame
     """
     if log_func is None:
         log_func = lambda msg, level='INFO': None
@@ -209,7 +218,8 @@ def add_5g_wanchenglv_calc_columns(df, log_func=None):
     field_map = _build_field_map(df, _5G_FIELD_MAP)
     log_func(f"[5G全程完好率] 字段映射: {list(field_map.keys())}", "INFO")
 
-    # ========== 1. 计算SA无线接通率% ==========
+    # SA 接通率的三个分段比例都以0到1参与相乘，最后一次性乘100；
+    # 这样不会在中间步骤混用百分数和小数。任一分母为0时整行记为 NaN。
     rrc_ok = all(k in field_map for k in ['rrc_succ', 'rrc_att'])
     flow_ok = all(k in field_map for k in ['flow_succ', 'flow_att'])
     ngsig_ok = all(k in field_map for k in ['ngsig_succ', 'ngsig_att'])

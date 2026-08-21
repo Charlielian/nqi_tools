@@ -54,7 +54,12 @@ def _find_config_path():
 
 
 def load_field_configs():
-    """加载所有字段配置，返回 {变量名: 值} 字典"""
+    """按运行环境查找并加载字段 JSON。
+
+    缺失文件返回空字典，JSON 结构或内容错误则让 ``json.load`` 抛出，
+    以便调用方区分“没有配置”和“配置文件损坏”。模块导入时会自动
+    执行一次加载；``reload`` 只更新模块级名称，不改写 JSON 文件。
+    """
     path = _find_config_path()
     if path is None:
         logger.error("未找到字段配置文件: %s", _CONFIG_FILE)
