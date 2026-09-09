@@ -7,7 +7,7 @@ Qt6 现代化安全登录对话框 (图形验证码 + 短信验证码)
 import json
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFrame, QMessageBox
+    QPushButton, QFrame, QMessageBox, QApplication
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QPixmap, QImage
@@ -32,6 +32,7 @@ class QtLoginDialog(QDialog):
 
         self._encrypted_username = None
         self._encrypted_password = None
+        self._captcha_code = ""  # 图形码通过后锁存，提交登录时使用
         self._countdown_timer = QTimer(self)
         self._countdown_timer.timeout.connect(self._on_countdown_tick)
         self._remaining_seconds = 0
@@ -215,6 +216,7 @@ class QtLoginDialog(QDialog):
 
                     self._encrypted_username = username_e
                     self._encrypted_password = password_e
+                    self._captcha_code = code  # 锁存图形验证码，登录提交时使用
 
                     # 解锁短信部分
                     self.btn_send_sms.setEnabled(True)
@@ -273,22 +275,30 @@ class QtLoginDialog(QDialog):
             self.lbl_sms_msg.setStyleSheet("color: #F53F3F;")
             return
 
+        if not self._encrypted_username or not self._encrypted_password:
+            self.lbl_sms_msg.setText("请先完成图形验证码验证")
+            self.lbl_sms_msg.setStyleSheet("color: #F53F3F;")
+            return
+
         self.lbl_sms_msg.setText("正在提交认证中...")
         self.lbl_sms_msg.setStyleSheet("color: #165DFF;")
         self.btn_submit.setEnabled(False)
+        QApplication.processEvents()
 
         try:
             from lxml import etree
+            # 提交前重新获取登录页 execution 参数（每次会话独立）
             html_res = self.sess.get(LOGIN_URL, headers=HEADERS)
             html_res.encoding = 'utf-8'
             html = etree.HTML(html_res.text)
-            execution = html.xpath('//*[@id="fm1"]/div[4]/input[1]')[0].attrib.get('value')
+            execution_nodes = html.xpath('//*[@id="fm1"]/div[4]/input[1]')
+            execution = execution_nodes[0].attrib.get('value') if execution_nodes else ''
 
             login_data = {
                 'password': self._encrypted_password,
                 'username': self._encrypted_username,
                 'msgCode': sms_code,
-                'captcha': self.entry_captcha.text().strip(),
+                'captcha': self._captcha_code,  # 使用校验时锁存的验证码（输入框可能已被禁用清空）
                 'uuid': '',
                 'execution': execution,
                 '_eventId': 'submit',

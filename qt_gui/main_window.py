@@ -450,8 +450,9 @@ class QtMainWindow(QMainWindow):
             # 用户在弹窗中通过了图形码 + 短信码验证
             self.session = self.login_manager.sess
             self.jxcx = JXCXQuery(session=self.session)
-            from core.auth import save_cookie
-            save_cookie(self.login_manager.username, self.session.cookies)
+            from utils.helpers import save_cookie
+            # 注意：save_cookie 参数顺序是 (cookie_jar, username)
+            save_cookie(self.session.cookies, self.login_manager.username)
             self._on_login_ui_success()
             self.log_viewer.append_log("统一认证通过，登录凭据已保存！", "SUCCESS")
         else:
