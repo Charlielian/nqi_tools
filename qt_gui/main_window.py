@@ -37,8 +37,9 @@ except (ImportError, TypeError):
 class WorkerBridge(QObject):
     """跨线程信号桥梁：安全地将后台工作线程状态转交 Qt 主线程刷新"""
     log_signal = pyqtSignal(str, str)
-    progress_signal = pyqtSignal(int, int, str)
+    progress_signal = pyqtSignal(float, float, str)
     finished_signal = pyqtSignal(bool)
+    main_call_signal = pyqtSignal(object)
 
 
 class QtMainWindow(QMainWindow):
@@ -63,6 +64,7 @@ class QtMainWindow(QMainWindow):
         self.bridge.log_signal.connect(self._on_log_received)
         self.bridge.progress_signal.connect(self._on_progress_received)
         self.bridge.finished_signal.connect(self._on_query_finished)
+        self.bridge.main_call_signal.connect(lambda fn: fn())
 
         self._init_ui()
         self._init_state()
@@ -526,14 +528,14 @@ class QtMainWindow(QMainWindow):
                 return self._val
 
         def _schedule_main(ms, fn, *args):
-            """后台线程调度：把回调安全地投递回 Qt 主线程执行"""
-            def _run():
+            """后台工作线程调度：通过 Qt 信号槽安全将回调函数投递回主线程执行"""
+            def _target():
                 try:
                     fn(*args)
                 except Exception:
                     import traceback
                     self.bridge.log_signal.emit(traceback.format_exc(), "ERROR")
-            QTimer.singleShot(0, _run)
+            self.bridge.main_call_signal.emit(_target)
 
         self.query_worker = QueryWorker(
             session=self.session,
@@ -608,10 +610,10 @@ class QtMainWindow(QMainWindow):
     def _on_log_received(self, msg: str, lvl: str):
         self.log_viewer.append_log(msg, lvl)
 
-    def _on_progress_received(self, current: int, total: int, detail: str):
+    def _on_progress_received(self, current: float, total: float, detail: str):
         if total > 0:
             pct = int((current / total) * 100)
-            self.progress_bar.setValue(pct)
+            self.progress_bar.setValue(min(100, max(0, pct)))
             self.lbl_progress_detail.setText(f"{detail} ({pct}%)")
 
     def _on_query_finished(self, success: bool):
