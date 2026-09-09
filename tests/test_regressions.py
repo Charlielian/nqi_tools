@@ -235,6 +235,158 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(config[field]["columntype"], "1")
             self.assertEqual(config[field]["table"], "csem.f_nk_vonr_keykpi_cell_d")
 
+    def test_new_month_tables_registration_and_payloads(self):
+        from gui.widgets import TableConfig
+        from gui.payload_templates import (
+            get_4g_mr_month_payload,
+            get_5g_capacity_month_payload,
+            get_important_scene_month_payload,
+        )
+        from gui.field_configs import (
+            MR_4G_MONTH_FIELDS,
+            CAPACITY_5G_MONTH_FIELDS,
+            IMPORTANT_SCENE_MONTH_FIELDS,
+        )
+
+        expected_tables = {
+            "4G覆盖-月": {
+                "table_name": "appdbv3.a_common_mro_rsrp_lte_cell",
+                "field_count": 44,
+                "payload_func": get_4g_mr_month_payload,
+                "fields": MR_4G_MONTH_FIELDS,
+            },
+            "5G小区容量-月": {
+                "table_name": "appdbv3.a_adhoc_capacity_nr_nrcell_m",
+                "field_count": 62,
+                "payload_func": get_5g_capacity_month_payload,
+                "fields": CAPACITY_5G_MONTH_FIELDS,
+            },
+            "重要场景-月": {
+                "table_name": "appdbv3.a_overview_ispm_lte_cell_m",
+                "field_count": 87,
+                "payload_func": get_important_scene_month_payload,
+                "fields": IMPORTANT_SCENE_MONTH_FIELDS,
+            },
+        }
+
+        for name, exp in expected_tables.items():
+            cfg = TableConfig.get_table_config(name)
+            self.assertIsNotNone(cfg, f"{name} should be in TableConfig")
+            self.assertEqual(cfg["table_name"], exp["table_name"])
+            self.assertEqual(len(cfg["fields"]), exp["field_count"])
+            self.assertEqual(cfg["payload_func"], exp["payload_func"])
+
+            # Test payload generation
+            payload = exp["payload_func"]("2026-08-01", "2026-08-31", "阳江")
+            columns = [c["data"] for c in payload["columns"]]
+            result_fields = [f["feild"] for f in payload["result"]["result"]]
+            self.assertEqual(columns, result_fields)
+            self.assertEqual(len(columns), exp["field_count"])
+            self.assertEqual(payload["where"][0]["val"], "2026-08-01 00:00:00")
+            self.assertEqual(payload["where"][1]["val"], "2026-08-31 23:59:59")
+            self.assertEqual(payload["where"][2]["val"], "阳江")
+
+    def test_4g_mr_day_table_fields_and_payload(self):
+        from gui.widgets import TableConfig
+        from gui.payload_templates import get_4g_mr_payload
+        from gui.field_configs import MR_4G_FIELDS, MR_4G_MONTH_FIELDS
+
+        cfg = TableConfig.get_table_config("4GMR覆盖-小区天")
+        self.assertIsNotNone(cfg, "4GMR覆盖-小区天 should be in TableConfig")
+        self.assertEqual(len(cfg["fields"]), 44)
+        self.assertEqual(len(MR_4G_FIELDS), 44)
+        # 天表在保留原有10个字段的基础上增加月表字段，字段集合与月表一致
+        self.assertEqual(
+            set(f["feild"] for f in MR_4G_FIELDS),
+            set(f["feild"] for f in MR_4G_MONTH_FIELDS),
+        )
+        # 原有字段仍保留
+        for feild in ("starttime", "cgi", "cell_name", "city",
+                      "mro_all_rsrp_count", "mro_yd_rsrp_gt_f110",
+                      "mro_yd_rsrp_rate", "mro_overlap_rsrp_rate",
+                      "mro_overlap_rsrp_count", "rsrp110_dist_avg"):
+            self.assertIn(feild, [f["feild"] for f in MR_4G_FIELDS])
+
+        payload = get_4g_mr_payload("2026-04-19", "2026-04-19", "阳江")
+        columns = [c["data"] for c in payload["columns"]]
+        result_fields = [f["feild"] for f in payload["result"]["result"]]
+        self.assertEqual(columns, result_fields)
+        self.assertEqual(len(columns), 44)
+        self.assertEqual(payload["result"]["tableParams"]["supportedtimedimension"], "1")
+        self.assertEqual(payload["where"][0]["val"], "2026-04-19 00:00:00")
+        self.assertEqual(payload["where"][1]["val"], "2026-04-19 23:59:59")
+        self.assertEqual(payload["where"][2]["val"], "阳江")
+
+
+    def test_date_range_picker_component(self):
+        import tkinter as tk
+        from gui.components import DateRangePicker
+        from datetime import date, timedelta
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            picker = DateRangePicker(root)
+            start, end = picker.get_range()
+            self.assertTrue(len(start) == 10 and len(end) == 10)
+
+            # set_range
+            picker.set_range("2026-05-01", "2026-05-31")
+            self.assertEqual(picker.get_range(), ("2026-05-01", "2026-05-31"))
+
+            # 反向日期自动修正
+            picker.set_range("2026-05-31", "2026-05-01")
+            self.assertEqual(picker.get_range(), ("2026-05-01", "2026-05-31"))
+
+            # 快捷方式
+            picker._apply_shortcut("昨天")
+            yesterday = date.today() - timedelta(days=1)
+            self.assertEqual(picker.get_range(), (yesterday.isoformat(), yesterday.isoformat()))
+
+            picker._apply_shortcut("近7天")
+            self.assertEqual(picker.get_range(), ((yesterday - timedelta(days=6)).isoformat(), yesterday.isoformat()))
+
+            # 点击两次拾取日期范围
+            picker._pick_date(date(2026, 6, 10))
+            self.assertEqual(picker._pending_start, date(2026, 6, 10))
+            picker._pick_date(date(2026, 6, 20))
+            self.assertEqual(picker.get_range(), ("2026-06-10", "2026-06-20"))
+            self.assertIsNone(picker._pending_start)
+        finally:
+            root.destroy()
+
+    def test_qt6_gui_initialization_and_components(self):
+        import sys
+        from PyQt6.QtWidgets import QApplication
+        from qt_gui.main_window import QtMainWindow
+        from qt_gui.components.date_range_picker import QtDateRangePicker
+        from qt_gui.components.multi_select_combo import QtMultiSelectCombo
+
+        app = QApplication.instance()
+        created_app = False
+        if app is None:
+            app = QApplication(sys.argv)
+            created_app = True
+
+        try:
+            # 独立测试日期范围组件
+            picker = QtDateRangePicker()
+            picker.set_range("2026-07-01", "2026-07-15")
+            self.assertEqual(picker.get_range(), ("2026-07-01", "2026-07-15"))
+
+            # 独立测试多选下拉组件
+            combo = QtMultiSelectCombo(items=["广州", "深圳", "阳江"])
+            combo.set_selected(["阳江"])
+            self.assertEqual(combo.get_selected(), ["阳江"])
+
+            # 实例化主窗口
+            win = QtMainWindow()
+            self.assertIsNotNone(win)
+            self.assertTrue(len(win.combo_tables._items) > 0)
+        finally:
+            if created_app:
+                app.quit()
+
 
 if __name__ == "__main__":
     unittest.main()

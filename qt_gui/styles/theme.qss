@@ -1,0 +1,245 @@
+/* =========================================================================
+   NQI 工具 Qt6 现代科技风样式表 (基于 Arco / Element Plus 设计语言)
+   主色调: #165DFF | 背景色: #F7F8FA | 卡片背景: #FFFFFF | 边框: #E5E6EB
+   ========================================================================= */
+
+/* 全局基底 */
+QWidget {
+    font-family: "PingFang SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    font-size: 13px;
+    color: #1D2129;
+    outline: none;
+}
+
+QMainWindow, QDialog {
+    background-color: #F7F8FA;
+}
+
+/* 卡片容器 */
+QFrame#CardFrame {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E6EB;
+    border-radius: 8px;
+}
+
+QFrame#HeaderCard {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E5E6EB;
+}
+
+/* 标题类 */
+QLabel#MainTitle {
+    font-size: 16px;
+    font-weight: bold;
+    color: #1D2129;
+}
+
+QLabel#CardTitle {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1D2129;
+}
+
+QLabel#SectionLabel {
+    font-size: 12px;
+    color: #4E5969;
+}
+
+QLabel#HintLabel {
+    font-size: 12px;
+    color: #86909C;
+}
+
+/* 按钮风格 */
+QPushButton {
+    background-color: #F2F3F5;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 14px;
+    color: #1D2129;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #E5E6EB;
+}
+
+QPushButton:pressed {
+    background-color: #C9CDD4;
+}
+
+QPushButton:disabled {
+    background-color: #F7F8FA;
+    color: #C9CDD4;
+    border-color: #E5E6EB;
+}
+
+/* 主要按钮 (Primary) */
+QPushButton#PrimaryButton {
+    background-color: #165DFF;
+    color: #FFFFFF;
+    border: 1px solid #165DFF;
+    font-weight: 600;
+}
+
+QPushButton#PrimaryButton:hover {
+    background-color: #4080FF;
+    border-color: #4080FF;
+}
+
+QPushButton#PrimaryButton:pressed {
+    background-color: #0E42D2;
+    border-color: #0E42D2;
+}
+
+QPushButton#PrimaryButton:disabled {
+    background-color: #94BFFF;
+    border-color: #94BFFF;
+    color: #FFFFFF;
+}
+
+/* 危险/停止按钮 */
+QPushButton#DangerButton {
+    background-color: #F53F3F;
+    color: #FFFFFF;
+    border: 1px solid #F53F3F;
+    font-weight: 600;
+}
+
+QPushButton#DangerButton:hover {
+    background-color: #F76560;
+    border-color: #F76560;
+}
+
+QPushButton#DangerButton:pressed {
+    background-color: #CB2634;
+    border-color: #CB2634;
+}
+
+QPushButton#DangerButton:disabled {
+    background-color: #FBACA3;
+    border-color: #FBACA3;
+    color: #FFFFFF;
+}
+
+/* 快捷胶囊按钮 (Tag / Shortcut) */
+QPushButton#TagButton {
+    background-color: #F2F3F5;
+    color: #4E5969;
+    border-radius: 12px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+QPushButton#TagButton:hover {
+    background-color: #E8F3FF;
+    color: #165DFF;
+}
+
+QPushButton#TagButton:checked {
+    background-color: #165DFF;
+    color: #FFFFFF;
+}
+
+/* 输入框与下拉框 */
+QLineEdit, QComboBox, QDateEdit {
+    background-color: #F2F3F5;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 10px;
+    selection-background-color: #165DFF;
+    color: #1D2129;
+}
+
+QLineEdit:hover, QComboBox:hover, QDateEdit:hover {
+    background-color: #E5E6EB;
+}
+
+QLineEdit:focus, QComboBox:focus, QDateEdit:focus {
+    background-color: #FFFFFF;
+    border: 1px solid #165DFF;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border-left: none;
+}
+
+/* 单选框与复选框 */
+QCheckBox, QRadioButton {
+    spacing: 6px;
+    color: #4E5969;
+}
+
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid #C9CDD4;
+    background-color: #FFFFFF;
+}
+
+QRadioButton::indicator {
+    border-radius: 8px;
+}
+
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {
+    border-color: #165DFF;
+}
+
+QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+    background-color: #165DFF;
+    border-color: #165DFF;
+}
+
+/* 进度条 */
+QProgressBar {
+    background-color: #F2F3F5;
+    border: none;
+    border-radius: 4px;
+    height: 8px;
+    text-align: center;
+    font-size: 10px;
+}
+
+QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4080FF, stop:1 #165DFF);
+    border-radius: 4px;
+}
+
+/* 日志文本框 */
+QPlainTextEdit#LogView {
+    background-color: #1D2129;
+    color: #F2F3F5;
+    font-family: "JetBrains Mono", "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    border: 1px solid #E5E6EB;
+    border-radius: 6px;
+    padding: 8px;
+    line-height: 1.4;
+}
+
+/* 滚动条 */
+QScrollBar:vertical {
+    border: none;
+    background: #F7F8FA;
+    width: 8px;
+    margin: 0px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical {
+    background: #C9CDD4;
+    min-height: 20px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #86909C;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}

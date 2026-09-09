@@ -1190,6 +1190,65 @@ def get_5g_voice_payload(start_date=None, end_date=None, city=None):
     }
 
 
+# ==================== NR过晚节电小区 ====================
+def get_nr_old_sav_payload(start_date=None, end_date=None, city=None):
+    """NR过晚节电小区清单payload (基于HAR抓包的精确配置)
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)，按日查询时为单日
+        end_date: 结束日期 (YYYY-MM-DD)，按日查询时与start_date相同
+        city: 地市名称
+    """
+    from gui.field_configs import NR_OLD_SAV_FIELDS
+
+    # 按HAR抓包：city/starttime 无 columntype，其余字段 columntype=1
+    no_columntype_fields = {'city', 'starttime'}
+    result_list = []
+    for field in NR_OLD_SAV_FIELDS:
+        feild = field.get('feild', '')
+        feildName = field.get('feildName', feild)
+        item = {
+            'feildtype': '节电小区_性能_NR_过晚节电小区',
+            'table': 'appdbv3.a_powersav_pm_sa_oldcell_d',
+            'tableName': '节电小区_性能_NR_过晚节电小区',
+            'datatype': field.get('datatype', 'character varying'),
+            'feildName': feildName,
+            'feild': feild,
+            'poly': '无',
+            'anyWay': '无',
+            'chart': '无',
+            'chartpoly': '无'
+        }
+        if feild not in no_columntype_fields:
+            item['columntype'] = field.get('columntype', 1)
+        result_list.append(item)
+
+    # 默认日期
+    if start_date is None:
+        start_date = '2026-08-28'
+    if end_date is None:
+        end_date = '2026-08-31'
+    if city is None:
+        city = '阳江'
+
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': '小区', 'timedimension': '天',
+        'enodebField': '---', 'cgiField': 'cgi', 'timeField': 'starttime',
+        'cellField': 'cell', 'cityField': 'city',
+        'columns': _build_columns_param([f['feild'] for f in NR_OLD_SAV_FIELDS]),
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 0
+    }
+
+
 # ==================== 5G工参 ====================
 def get_5g_gongcan_payload():
     """5G小区工参报表payload"""
@@ -1676,21 +1735,25 @@ def get_4g_mr_payload(start_date=None, end_date=None, city=None):
         end_date: 结束日期 (YYYY-MM-DD)，按日查询时与start_date相同
         city: 地市名称
     """
-    # 基于HAR抓包的正确字段配置
-    fields = [
-        ('starttime', '开始时间'),
-        ('cgi', 'cgi'),
-        ('cell_name', '小区名'),
-        ('city', '地市'),
-        ('mro_all_rsrp_count', 'MRO移动总采样点'),
-        ('mro_yd_rsrp_gt_f110', 'MRO移动大于等于负110DBM的采样点数'),
-        ('mro_yd_rsrp_rate', 'MRO移动覆盖率'),
-        ('mro_overlap_rsrp_rate', 'MRO移动重叠覆盖率'),
-        ('mro_overlap_rsrp_count', 'MRO移动覆盖采样点数'),
-        ('rsrp110_dist_avg', '平均TA'),
-    ]
-    fixed_fields = {'starttime', 'cgi', 'cell_name', 'city'}
-    result_list = _build_result_fields(fields, '4G_MRO_RSRP基础性能_小区', 'appdbv3.a_common_mro_rsrp_lte_cell', fixed_fields)
+    from gui.field_configs import MR_4G_FIELDS
+
+    result_list = []
+    for f in MR_4G_FIELDS:
+        item = {
+            'feildtype': f['feildtype'],
+            'table': f['table'],
+            'tableName': f['tableName'],
+            'datatype': f['datatype'],
+            'feildName': f['feildName'],
+            'feild': f['feild'],
+            'poly': '无',
+            'anyWay': '无',
+            'chart': '无',
+            'chartpoly': '无'
+        }
+        if 'columntype' in f and f['columntype'] is not None:
+            item['columntype'] = f['columntype']
+        result_list.append(item)
 
     # 默认日期
     if start_date is None:
@@ -1700,6 +1763,7 @@ def get_4g_mr_payload(start_date=None, end_date=None, city=None):
     if city is None:
         city = '阳江'
 
+    field_names = [f['feild'] for f in MR_4G_FIELDS]
     return {
         'draw': 1, 'start': 0, 'length': 200, 'total': 0,
         'geographicdimension': '小区，网格，地市，分公司',
@@ -1709,10 +1773,14 @@ def get_4g_mr_payload(start_date=None, end_date=None, city=None):
         'timeField': 'starttime',
         'cellField': 'cell',
         'cityField': 'city',
-        'columns': _build_columns_param([f[0] for f in fields]),
+        'columns': _build_columns_param(field_names),
         'order': [{'column': 0, 'dir': 'desc'}],
         'search': {'value': '', 'regex': False},
-        'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': '1'}, 'columnname': ''},
+        'result': {
+            'result': result_list,
+            'tableParams': {'supporteddimension': None, 'supportedtimedimension': '1'},
+            'columnname': ''
+        },
         'where': [
             {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
             {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
@@ -1839,3 +1907,193 @@ def get_sectors_4g_5g_payload(start_date=None, end_date=None, city=None):
         ],
         'indexcount': 0
     }
+
+
+# ==================== 4G覆盖-月 ====================
+def get_4g_mr_month_payload(start_date=None, end_date=None, city=None):
+    """4G覆盖-月报表payload (基于output_20260907_152600-4G覆盖-月.har抓包)
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+        city: 地市名称
+    """
+    from gui.field_configs import MR_4G_MONTH_FIELDS
+
+    result_list = []
+    for f in MR_4G_MONTH_FIELDS:
+        item = {
+            'feildtype': f['feildtype'],
+            'table': f['table'],
+            'tableName': f['tableName'],
+            'datatype': f['datatype'],
+            'feildName': f['feildName'],
+            'feild': f['feild'],
+            'poly': '无',
+            'anyWay': '无',
+            'chart': '无',
+            'chartpoly': '无'
+        }
+        if 'columntype' in f and f['columntype'] is not None:
+            item['columntype'] = f['columntype']
+        result_list.append(item)
+
+    if start_date is None:
+        start_date = '2026-08-01'
+    if end_date is None:
+        end_date = '2026-08-31'
+    if city is None:
+        city = '阳江'
+
+    field_names = [f['feild'] for f in MR_4G_MONTH_FIELDS]
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': '小区，网格，地市，分公司',
+        'timedimension': '天、周、月',
+        'enodebField': 'enodeb_id',
+        'cgiField': 'cgi',
+        'timeField': 'starttime',
+        'cellField': 'cell',
+        'cityField': 'city',
+        'columns': _build_columns_param(field_names),
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {
+            'result': result_list,
+            'tableParams': {'supporteddimension': None, 'supportedtimedimension': '3'},
+            'columnname': ''
+        },
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 0
+    }
+
+
+# ==================== 5G小区容量-月 ====================
+def get_5g_capacity_month_payload(start_date=None, end_date=None, city=None):
+    """5G小区容量-月粒度报表payload (基于output_20260907_151557-5G小区容量-月粒度.har抓包)
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+        city: 地市名称
+    """
+    from gui.field_configs import CAPACITY_5G_MONTH_FIELDS
+
+    result_list = []
+    for f in CAPACITY_5G_MONTH_FIELDS:
+        item = {
+            'feildtype': f['feildtype'],
+            'table': f['table'],
+            'tableName': f['tableName'],
+            'datatype': f['datatype'],
+            'feildName': f['feildName'],
+            'feild': f['feild'],
+            'poly': '无',
+            'anyWay': '无',
+            'chart': '无',
+            'chartpoly': '无'
+        }
+        if 'columntype' in f and f['columntype'] is not None:
+            item['columntype'] = f['columntype']
+        result_list.append(item)
+
+    if start_date is None:
+        start_date = '2026-08-01'
+    if end_date is None:
+        end_date = '2026-08-31'
+    if city is None:
+        city = '阳江'
+
+    field_names = [f['feild'] for f in CAPACITY_5G_MONTH_FIELDS]
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': '小区',
+        'timedimension': '月',
+        'enodebField': 'gnodeb_id',
+        'cgiField': 'ncgi',
+        'timeField': 'starttime',
+        'cellField': 'nrcell',
+        'cityField': 'city',
+        'columns': _build_columns_param(field_names),
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {
+            'result': result_list,
+            'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''},
+            'columnname': ''
+        },
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 0
+    }
+
+
+# ==================== 重要场景-月 ====================
+def get_important_scene_month_payload(start_date=None, end_date=None, city=None):
+    """重要场景-小区月粒度报表payload (基于output_20260907_151141-重要场景-小区月粒度.har抓包)
+
+    Args:
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+        city: 地市名称
+    """
+    from gui.field_configs import IMPORTANT_SCENE_MONTH_FIELDS
+
+    result_list = []
+    for f in IMPORTANT_SCENE_MONTH_FIELDS:
+        item = {
+            'feildtype': f['feildtype'],
+            'table': f['table'],
+            'tableName': f['tableName'],
+            'datatype': f['datatype'],
+            'feildName': f['feildName'],
+            'feild': f['feild'],
+            'poly': '无',
+            'anyWay': '无',
+            'chart': '无',
+            'chartpoly': '无'
+        }
+        if 'columntype' in f and f['columntype'] is not None:
+            item['columntype'] = f['columntype']
+        result_list.append(item)
+
+    if start_date is None:
+        start_date = '2026-08-01'
+    if end_date is None:
+        end_date = '2026-08-31'
+    if city is None:
+        city = '阳江'
+
+    field_names = [f['feild'] for f in IMPORTANT_SCENE_MONTH_FIELDS]
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': '小区',
+        'timedimension': '月',
+        'enodebField': 'enodeb_id',
+        'cgiField': 'cgi',
+        'timeField': 'starttime',
+        'cellField': 'cell',
+        'cityField': 'city',
+        'columns': _build_columns_param(field_names),
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {
+            'result': result_list,
+            'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''},
+            'columnname': ''
+        },
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True}
+        ],
+        'indexcount': 0
+    }
+

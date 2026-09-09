@@ -6,8 +6,10 @@
 
 import tkinter as tk
 from tkinter import ttk
-from typing import List, Callable, Optional, Any
+from typing import List, Callable, Optional, Any, Tuple
+import calendar as calendar_module
 import re
+from datetime import date, datetime, timedelta
 
 from gui.theme import colors, fonts, spacing
 
@@ -381,6 +383,377 @@ class CalendarDialog(tk.Toplevel):
         """显示对话框并返回选择的日期"""
         self.wait_window()
         return self.selected_date
+
+
+class DateRangePicker(ttk.Frame):
+    """日期范围选择器，交互参考 Element Plus 的 ``el-date-picker type=daterange``。
+
+    输入区分左右两段（开始日期 / 至 / 结束日期），任一段或 ▼ 按钮点击
+    都会弹出双月日历面板：第一次点击设定开始日期，第二次点击设定结束
+    日期并自动确认。点击面板外部或按 Esc 关闭。``set_range`` 用于程序
+    回填，不触发回调。
+    """
+
+    WEEK_LABELS = ['一', '二', '三', '四', '五', '六', '日']
+    MONTH_NAMES = ['一月', '二月', '三月', '四月', '五月', '六月',
+                   '七月', '八月', '九月', '十月', '十一月', '十二月']
+
+    def __init__(self, parent, width: int = 24,
+                 on_change: Optional[Callable] = None, **kwargs):
+        super().__init__(parent, **kwargs)
+
+        self.start_date: Optional[date] = date.today().replace(day=1)
+        self.end_date: Optional[date] = date.today() - timedelta(days=1)
+
+        self.on_change_callback = on_change
+
+        # 输入区：开始日期框 + "至" + 结束日期框（Element Plus daterange 外观）
+        box = tk.Frame(self, bg=colors.gray_200, bd=0)
+        box.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.start_var = tk.StringVar(value='开始日期')
+        self.end_var = tk.StringVar(value='结束日期')
+        self.start_entry = tk.Entry(
+            box, textvariable=self.start_var, width=width // 2,
+            font=(fonts.family, 10), bg='white', fg=colors.gray_800,
+            bd=0, relief='flat', readonlybackground='white',
+            cursor='hand2', justify='center'
+        )
+        self.start_entry.pack(side=tk.LEFT, padx=(6, 0), pady=2)
+        self.start_entry.bind('<Button-1>', lambda e: self._show_dropdown())
+
+        tk.Label(box, text="至", font=(fonts.family, 10),
+                 bg='white', fg=colors.gray_400).pack(side=tk.LEFT, padx=4)
+
+        self.end_entry = tk.Entry(
+            box, textvariable=self.end_var, width=width // 2,
+            font=(fonts.family, 10), bg='white', fg=colors.gray_800,
+            bd=0, relief='flat', readonlybackground='white',
+            cursor='hand2', justify='center'
+        )
+        self.end_entry.pack(side=tk.LEFT, padx=(0, 2), pady=2)
+        self.end_entry.bind('<Button-1>', lambda e: self._show_dropdown())
+
+        self.btn = ttk.Button(self, text="▼", width=3, command=self._toggle_dropdown)
+        self.btn.pack(side=tk.LEFT)
+
+        # 弹出日历面板
+        self.dropdown = tk.Toplevel(self)
+        self.dropdown.withdraw()
+        self.dropdown.overrideredirect(True)
+        self.dropdown.attributes('-topmost', True)
+
+        self._view_year = self.start_date.year
+        self._view_month = self.start_date.month
+        # 临时选择状态：None 表示尚未点选任何日期
+        self._pending_start: Optional[date] = None
+        self._hover_date: Optional[date] = None
+        self._day_buttons: dict = {}  # {date: tk.Button}，避免 hover 重建所有组件
+        self._global_bind_id = None
+
+        self._build_panel()
+        self._refresh_entry()
+        self.dropdown.bind('<Escape>', lambda e: self._hide_dropdown())
+
+    def _on_global_click(self, event):
+        """仅在面板展开时监听全局点击，点在外部时关闭面板"""
+        if not self.dropdown.winfo_viewable():
+            return
+        widget = event.widget
+        try:
+            # 点击在下拉面板内部，不关闭
+            if str(widget).startswith(str(self.dropdown)):
+                return
+        except tk.TclError:
+            pass
+        # 点击在日期选择框自身（输入框、至、下拉按钮等），不在此处关闭（由按钮自身 toggle）
+        if widget in (self.start_entry, self.end_entry, self.btn, self) or str(widget).startswith(str(self)):
+            return
+        self._hide_dropdown()
+
+    def _show_dropdown(self):
+        # 面板视图回到当前选中开始日期所在月份
+        anchor = self.start_date or date.today()
+        self._view_year = anchor.year
+        self._view_month = anchor.month
+        self._pending_start = None
+        self._hover_date = None
+        self._render_panel()
+
+        self.dropdown.update_idletasks()
+        x = self.start_entry.winfo_rootx()
+        y = self.start_entry.winfo_rooty() + self.start_entry.winfo_height() + 2
+        # 防止面板超出屏幕底部
+        panel_h = self.dropdown.winfo_reqheight()
+        screen_h = self.dropdown.winfo_screenheight()
+        if y + panel_h > screen_h:
+            y = max(0, self.start_entry.winfo_rooty() - panel_h - 2)
+        self.dropdown.geometry(f"+{x}+{y}")
+        self.dropdown.deiconify()
+
+        # 仅在显示时绑定全局点击，避免未展开时常驻监听影响其他点击
+        if not self._global_bind_id:
+            self._global_bind_id = self.dropdown.bind_all('<Button-1>', self._on_global_click, add='+')
+
+    def _hide_dropdown(self):
+        """关闭下拉面板并注销全局监听"""
+        if self._global_bind_id:
+            try:
+                self.dropdown.unbind_all('<Button-1>')
+            except tk.TclError:
+                pass
+            self._global_bind_id = None
+        self.dropdown.withdraw()
+
+    def _toggle_dropdown(self):
+        if self.dropdown.winfo_viewable():
+            self._hide_dropdown()
+        else:
+            self._show_dropdown()
+
+    # ---------- 对外接口 ----------
+
+    def get_range(self) -> Tuple[str, str]:
+        """返回 (开始日期, 结束日期)，格式 YYYY-MM-DD"""
+        return (
+            self.start_date.strftime('%Y-%m-%d'),
+            self.end_date.strftime('%Y-%m-%d'),
+        )
+
+    def set_range(self, start_date, end_date):
+        """程序回填日期，不触发 on_change 回调。
+
+        Args:
+            start_date: date 对象或 YYYY-MM-DD 字符串
+            end_date: 同上
+        """
+        self.start_date = self._to_date(start_date)
+        self.end_date = self._to_date(end_date)
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            self.start_date, self.end_date = self.end_date, self.start_date
+        self._refresh_entry()
+
+    # ---------- 内部实现 ----------
+
+    @staticmethod
+    def _to_date(value) -> Optional[date]:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        return datetime.strptime(value, '%Y-%m-%d').date()
+
+    def _refresh_entry(self):
+        """刷新输入框显示文本"""
+        if self.start_date and self.end_date:
+            start_text = self.start_date.strftime('%Y-%m-%d')
+            end_text = self.end_date.strftime('%Y-%m-%d')
+        else:
+            start_text, end_text = "开始日期", "结束日期"
+        self.start_var.set(start_text)
+        self.end_var.set(end_text)
+
+    def _build_panel(self):
+        """构建弹出面板：双月日历 + 快捷选项 + 底部按钮"""
+        panel = tk.Frame(self.dropdown, bg='white', bd=1, relief='solid')
+        panel.pack(fill=tk.BOTH, expand=True)
+
+        # 快捷选项行（参考 Element Plus shortcuts）
+        shortcut_frame = tk.Frame(panel, bg='white')
+        shortcut_frame.pack(fill=tk.X, padx=8, pady=(6, 0))
+        for text in ('昨天', '近7天', '近30天', '本月', '上月'):
+            tk.Button(
+                shortcut_frame, text=text, font=(fonts.family, 9),
+                bg=colors.gray_100, fg=colors.gray_800, bd=0,
+                relief='flat', cursor='hand2',
+                command=lambda t=text: self._apply_shortcut(t)
+            ).pack(side=tk.LEFT, padx=(0, 6))
+
+        # 双月日历区域
+        self.months_frame = tk.Frame(panel, bg='white')
+        self.months_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+
+        # 底部按钮
+        btn_frame = tk.Frame(panel, bg='white')
+        btn_frame.pack(fill=tk.X, padx=8, pady=(0, 8))
+        tk.Button(
+            btn_frame, text="确定", font=(fonts.family, 9, 'bold'),
+            bg=colors.primary, fg='white', bd=0, relief='flat',
+            cursor='hand2', padx=12,
+            command=self._confirm
+        ).pack(side=tk.RIGHT)
+        tk.Button(
+            btn_frame, text="取消", font=(fonts.family, 9),
+            bg=colors.gray_200, fg=colors.gray_800, bd=0, relief='flat',
+            cursor='hand2', padx=12,
+            command=self._hide_dropdown
+        ).pack(side=tk.RIGHT, padx=(0, 6))
+
+    def _shift_month(self, year: int, month: int, offset: int) -> Tuple[int, int]:
+        total = year * 12 + (month - 1) + offset
+        return total // 12, total % 12 + 1
+
+    def _render_panel(self):
+        """渲染左右两个月份的日历"""
+        self._day_buttons.clear()
+        for widget in self.months_frame.winfo_children():
+            widget.destroy()
+
+        # 顶部导航：◀ 当前显示的左侧月份 ▶
+        nav = tk.Frame(self.months_frame, bg='white')
+        nav.grid(row=0, column=0, columnspan=14, sticky='ew', pady=(0, 4))
+
+        tk.Button(nav, text="◀", font=('Arial', 10), bg='white',
+                  fg=colors.gray_700, bd=0, cursor='hand2',
+                  command=lambda: self._navigate(-1)).pack(side=tk.LEFT)
+        tk.Button(nav, text="▶", font=('Arial', 10), bg='white',
+                  fg=colors.gray_700, bd=0, cursor='hand2',
+                  command=lambda: self._navigate(1)).pack(side=tk.RIGHT)
+
+        # 两列月份：左列标签，右列日期网格
+        for col_index, offset in enumerate((0, 1)):
+            year, month = self._shift_month(self._view_year, self._view_month, offset)
+            self._render_month(year, month, col_index)
+
+        self.months_frame.columnconfigure(1, weight=1)
+        self.months_frame.columnconfigure(8, weight=1)
+
+    def _navigate(self, offset: int):
+        self._view_year, self._view_month = self._shift_month(
+            self._view_year, self._view_month, offset
+        )
+        self._render_panel()
+
+    def _render_month(self, year: int, month: int, col_index: int):
+        """渲染单个月份：col_index 0=左月标题列，1=右月（日期网格从列 1/8 起）"""
+        base_col = col_index * 7
+
+        # 月份标题
+        title = tk.Label(
+            self.months_frame,
+            text=f"{year}年 {self.MONTH_NAMES[month - 1]}",
+            font=(fonts.family, 10, 'bold'), bg='white', fg=colors.gray_800
+        )
+        title.grid(row=1, column=base_col, columnspan=7, pady=(0, 2))
+
+        # 星期标题
+        for i, week in enumerate(self.WEEK_LABELS):
+            color = colors.error if week in ('六', '日') else colors.gray_500
+            tk.Label(self.months_frame, text=week, font=(fonts.family, 9),
+                     bg='white', fg=color, width=3
+                     ).grid(row=2, column=base_col + i)
+
+        first_weekday, days_in_month = calendar_module.monthrange(year, month)
+        today = date.today()
+
+        for day in range(1, days_in_month + 1):
+            current = date(year, month, day)
+            row = 3 + (first_weekday + day - 1) // 7
+            col = base_col + (first_weekday + day - 1) % 7
+
+            btn = tk.Button(
+                self.months_frame, text=str(day), font=(fonts.family, 9),
+                width=3, bg=colors.white, fg=colors.gray_800,
+                bd=0, relief='flat', cursor='hand2',
+                activebackground=colors.primary_light,
+                command=lambda d=current: self._pick_date(d)
+            )
+            btn.grid(row=row, column=col, padx=1, pady=1)
+            self._day_buttons[current] = btn
+
+            # 悬停更新样式（通过直接修改按钮属性，不销毁重建 DOM）
+            btn.bind('<Enter>', lambda e, d=current: self._on_hover(d))
+
+        self._update_button_styles()
+
+    def _update_button_styles(self):
+        """原地更新所有日期按钮样式，毫秒级就绪且不丢失任何点击事件"""
+        today = date.today()
+        for d, btn in self._day_buttons.items():
+            in_range = self._in_preview_range(d)
+            is_endpoint = d in (
+                self._pending_start, self._hover_date,
+                self.start_date, self.end_date
+            )
+            is_today = d == today
+
+            bg = colors.white
+            fg = colors.gray_800
+            if in_range:
+                bg = colors.primary_light
+            if is_endpoint:
+                bg = colors.primary
+                fg = colors.white
+            elif is_today:
+                fg = colors.primary
+
+            btn.config(bg=bg, fg=fg)
+
+    def _on_hover(self, d: date):
+        if self._pending_start and d >= self._pending_start:
+            self._hover_date = d
+            self._update_button_styles()
+
+    def _in_preview_range(self, d: date) -> bool:
+        """判断日期是否落在预览区间内（含已确认的 start/end 或 pending 选择）"""
+        start = self._pending_start or self.start_date
+        end = self._hover_date or self.end_date
+        if not start or not end:
+            return False
+        if end < start:
+            start, end = end, start
+        return start <= d <= end
+
+    def _pick_date(self, d: date):
+        """第一次点击设开始，第二次点击设结束"""
+        if self._pending_start is None:
+            self._pending_start = d
+            self._hover_date = None
+            self._update_button_styles()
+        else:
+            start, end = sorted((self._pending_start, d))
+            self.start_date, self.end_date = start, end
+            self._pending_start = None
+            self._hover_date = None
+            self._refresh_entry()
+            self._hide_dropdown()
+            if self.on_change_callback:
+                self.on_change_callback(*self.get_range())
+
+    def _confirm(self):
+        """确认当前选择（未完成两次点击时按已确认值处理）"""
+        if self._pending_start is not None:
+            if self._pending_start > self.end_date:
+                self.start_date, self.end_date = self.end_date, self._pending_start
+            else:
+                self.start_date = self._pending_start
+            self._pending_start = None
+            self._refresh_entry()
+        self._hide_dropdown()
+        if self.on_change_callback:
+            self.on_change_callback(*self.get_range())
+
+    def _apply_shortcut(self, text: str):
+        """应用快捷日期（昨天/近7天/近30天/本月/上月）"""
+        today = date.today()
+        if text == '昨天':
+            end = today - timedelta(days=1)
+            self.set_range(end, end)
+        elif text == '近7天':
+            end = today - timedelta(days=1)
+            self.set_range(end - timedelta(days=6), end)
+        elif text == '近30天':
+            end = today - timedelta(days=1)
+            self.set_range(end - timedelta(days=29), end)
+        elif text == '本月':
+            self.set_range(today.replace(day=1), today)
+        elif text == '上月':
+            first_of_month = today.replace(day=1)
+            last_month_end = first_of_month - timedelta(days=1)
+            self.set_range(last_month_end.replace(day=1), last_month_end)
+        self._hide_dropdown()
+        if self.on_change_callback:
+            self.on_change_callback(*self.get_range())
 
 
 class ValidationEntry(ttk.Entry):

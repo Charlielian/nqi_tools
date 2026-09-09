@@ -161,7 +161,7 @@ HEADERS_JSON = {
     'Content-Type': 'application/json'
 }
 
-EXPIRY_DATE = "2026-09-30"
+EXPIRY_DATE = "2026-12-31"
 # TODO: EXPIRY_DATE 硬编码在模块中，每次延期需修改代码。建议改为从外部文件或环境变量读取。
 LICENSE_FILE = "license.dat"
 

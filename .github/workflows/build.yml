@@ -1,4 +1,4 @@
-name: Build EXE
+name: Build EXE (Dual Versions: Tk & Qt6)
 
 on:
   push:
@@ -28,18 +28,23 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build EXE with PyInstaller
+      - name: Build Tkinter Version EXE
         run: |
           pyinstaller NqiTool.spec
+
+      - name: Build Qt6 Version EXE
+        run: |
+          pyinstaller NqiTool_qt.spec
 
       - name: Prepare release package
         shell: pwsh
         run: |
-          $ReleaseDir = "release/NqiTool"
+          $ReleaseDir = "release/NqiTool_Package"
           New-Item -Path $ReleaseDir -ItemType Directory -Force
 
-          # 复制 EXE
-          Copy-Item "dist/NqiTool.exe" "$ReleaseDir/"
+          # 复制双版本可执行文件
+          Copy-Item "dist/NqiTool.exe" "$ReleaseDir/NqiTool_classic_tk.exe"
+          Copy-Item "dist/NqiTool_qt.exe" "$ReleaseDir/NqiTool_modern_qt.exe"
 
           # 创建默认 config.yaml
           $ConfigLines = @(
@@ -70,16 +75,19 @@ jobs:
 
           # 创建 README
           $ReadmeLines = @(
-            "# NqiTool 使用说明",
+            "# NQI 工具使用说明 (双版本)",
             "",
-            "1. 首次运行前，修改 config.yaml 填写正确的用户名和密码",
-            "2. 双击 NqiTool.exe 启动程序",
-            "3. 导出的数据会保存在 data_output 目录中"
+            "本安装包包含两个版本的可执行程序（共用 config.yaml 配置与数据输出目录）：",
+            "",
+            "1. 【推荐】NqiTool_modern_qt.exe：全新 Qt6 现代化科技风桌面版（支持纯白/极客暗双色主题切换、极速双日历、流式彩色日志）",
+            "2. 【备用】NqiTool_classic_tk.exe：经典 Tkinter 极简兼容版",
+            "",
+            "首次运行前，修改 config.yaml 填写正确的用户名和密码即可双击运行。"
           )
           $ReadmeLines | Set-Content -Path "$ReleaseDir/README.txt" -Encoding UTF8
 
-          # 打包为 ZIP
-          Compress-Archive -Path "release/NqiTool" -DestinationPath "release/NqiTool.zip" -Force
+          # 打包为 ZIP 归档
+          Compress-Archive -Path "$ReleaseDir" -DestinationPath "release/NqiTool_Windows_DualVersions.zip" -Force
 
           # 显示包内容
           Write-Host "=== ZIP 包内容 ==="
@@ -91,14 +99,14 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NqiTool-Windows
-          path: release/NqiTool.zip
+          name: NqiTool-Windows-DualVersions
+          path: release/NqiTool_Windows_DualVersions.zip
 
       - name: Create Release on Tag Push
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: release/NqiTool.zip
+          files: release/NqiTool_Windows_DualVersions.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

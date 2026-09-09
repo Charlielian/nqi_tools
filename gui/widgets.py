@@ -20,11 +20,13 @@ from gui.field_configs import (
     IMPORTANT_SCENE_FIELDS, IMPORTANT_SCENE_WEEK_FIELDS,
     GONGCAN_5G_FIELDS, GONGCAN_4G_FIELDS,
     MR_5G_FIELDS, MR_4G_FIELDS,
+    MR_4G_MONTH_FIELDS, CAPACITY_5G_MONTH_FIELDS, IMPORTANT_SCENE_MONTH_FIELDS,
     VOLTE_WARNING_FIELDS, VONR_WARNING_FIELDS, EPSFB_WARNING_FIELDS,
     KPI_4G_FIELDS, KPI_5G_FIELDS,
     VOICE_5G_FIELDS,
     FLOW_HOT_SPOT_STATION_FIELDS,
     SECTORS_4G_5G_FIELDS,
+    NR_OLD_SAV_FIELDS,
     SYNTHESIZE_45G_CONFIG,
 )
 
@@ -42,6 +44,10 @@ from gui.payload_templates import (
     get_flow_hot_spot_station_payload,
     get_common_pm_cell_day_v3_payload,
     get_sectors_4g_5g_payload,
+    get_nr_old_sav_payload,
+    get_4g_mr_month_payload,
+    get_5g_capacity_month_payload,
+    get_important_scene_month_payload,
 )
 from gui.city_table_configs import CITY_TABLE_CONFIGS
 
@@ -532,6 +538,25 @@ class TableConfig:
             },
             'fields': INTERFERENCE_5G_FIELDS,
         },
+        'NR过晚节电小区': {
+            'name': 'NR过晚节电小区',
+            'table_key': '节电小区_性能_NR_过晚节电小区',
+            'table_name': 'appdbv3.a_powersav_pm_sa_oldcell_d',
+            'fieldtype': '节电小区_性能_NR_过晚节电小区',
+            'api_type': 'table',
+            'payload_func': get_nr_old_sav_payload,
+            'default_conditions': [],
+            'dimension': {
+                'geographicdimension': '小区',
+                'timedimension': '天',
+                'enodebField': '---',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'cell',
+                'cityField': 'city',
+            },
+            'fields': NR_OLD_SAV_FIELDS,
+        },
         '5G_干扰报表_自忙时': {
             'name': '5G_干扰报表_自忙时',
             'table_key': '5G_干扰报表_自忙时',
@@ -635,6 +660,26 @@ class TableConfig:
             }
         },
 
+        '5G小区容量-月': {
+            'name': '5G小区容量-月',
+            'table_key': '5G小区容量报表 - 月粒度',
+            'table_name': 'appdbv3.a_adhoc_capacity_nr_nrcell_m',
+            'fieldtype': '5G小区容量报表 - 周粒度',
+            'api_type': 'table',
+            'payload_func': get_5g_capacity_month_payload,
+            'fields': CAPACITY_5G_MONTH_FIELDS,
+            'default_conditions': [],
+            'dimension': {
+                'geographicdimension': '小区',
+                'timedimension': '月',
+                'enodebField': 'gnodeb_id',
+                'cgiField': 'ncgi',
+                'timeField': 'starttime',
+                'cellField': 'nrcell',
+                'cityField': 'city',
+            }
+        },
+
         '重要场景-天': {
             'name': '重要场景-天',
             'table_key': '重要场景-小区天',
@@ -667,6 +712,26 @@ class TableConfig:
             'dimension': {
                 'geographicdimension': '小区',
                 'timedimension': '周',
+                'enodebField': 'enodeb_id',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'cell',
+                'cityField': 'city',
+            }
+        },
+
+        '重要场景-月': {
+            'name': '重要场景-月',
+            'table_key': '[管理视图]重要场景-小区月粒度',
+            'table_name': 'appdbv3.a_overview_ispm_lte_cell_m',
+            'fieldtype': '重要场景-小区月',
+            'api_type': 'table',
+            'payload_func': get_important_scene_month_payload,
+            'fields': IMPORTANT_SCENE_MONTH_FIELDS,
+            'default_conditions': [],
+            'dimension': {
+                'geographicdimension': '小区',
+                'timedimension': '月',
                 'enodebField': 'enodeb_id',
                 'cgiField': 'cgi',
                 'timeField': 'starttime',
@@ -771,6 +836,25 @@ class TableConfig:
             'api_type': 'table',
             'payload_func': get_4g_mr_payload,
             'fields': MR_4G_FIELDS,
+            'default_conditions': [],
+            'dimension': {
+                'geographicdimension': '小区，网格，地市，分公司',
+                'timedimension': '天、周、月',
+                'enodebField': 'enodeb_id',
+                'cgiField': 'cgi',
+                'timeField': 'starttime',
+                'cellField': 'cell',
+                'cityField': 'city',
+            }
+        },
+        '4G覆盖-月': {
+            'name': '4G覆盖-月',
+            'table_key': '4G_MRO_RSRP基础性能_小区',
+            'table_name': 'appdbv3.a_common_mro_rsrp_lte_cell',
+            'fieldtype': '应用_4GMRO_RSRP基础性能_小区',
+            'api_type': 'table',
+            'payload_func': get_4g_mr_month_payload,
+            'fields': MR_4G_MONTH_FIELDS,
             'default_conditions': [],
             'dimension': {
                 'geographicdimension': '小区，网格，地市，分公司',
