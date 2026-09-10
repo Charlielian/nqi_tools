@@ -427,11 +427,13 @@ class QtMainWindow(QMainWindow):
             saved_cookie = load_cookie(self.login_manager.username)
             if saved_cookie:
                 self.login_manager.sess.cookies = saved_cookie
-                if self.login_manager._check_session():
+                # 用更严谨的 JXCX 可访问性校验（进入即席查询模块成功才算有效）
+                probe_query = JXCXQuery(session=self.login_manager.sess)
+                if probe_query.enter_jxcx():
                     self.session = self.login_manager.sess
-                    self.jxcx = JXCXQuery(session=self.session)
+                    self.jxcx = probe_query
                     self.bridge.log_signal.emit("✓ 使用已保存的Cookie成功免密登录！", "SUCCESS")
-                    QTimer.singleShot(0, lambda: self._on_login_ui_success())
+                    QTimer.singleShot(0, self._on_login_ui_success)
                     return
 
             # 需要弹窗完成图形验证码 + 短信验证码
