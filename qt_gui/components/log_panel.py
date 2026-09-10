@@ -14,6 +14,7 @@ class QtLogViewer(QWidget):
 
     # 亮色主题下使用深色正文 + 清晰色块，保证白底可读
     COLOR_MAP = {
+        'DEBUG': QColor('#71717A'),     # 调试灰
         'INFO': QColor('#1D4ED8'),      # 深蓝（白底可读）
         'SUCCESS': QColor('#15803D'),   # 深绿（白底可读）
         'WARNING': QColor('#B45309'),   # 深橙（白底可读）
@@ -22,9 +23,10 @@ class QtLogViewer(QWidget):
     # 消息正文颜色（白底主题下为深灰，暗色主题下由暗色 QSS 覆盖为亮色）
     MESSAGE_COLOR = QColor('#1F2328')
 
-    def __init__(self, parent=None, max_lines: int = 1500):
+    def __init__(self, parent=None, max_lines: int = 3000):
         super().__init__(parent)
         self.max_lines = max_lines
+        self._show_debug = True  # 默认显示全量调试信息
         self._init_ui()
 
     def _init_ui(self):

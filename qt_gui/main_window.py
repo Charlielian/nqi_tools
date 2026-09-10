@@ -315,9 +315,15 @@ class QtMainWindow(QMainWindow):
         self.btn_open_folder.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_open_folder.clicked.connect(self._open_output_dir)
 
+        self.btn_open_logs = QPushButton("📜 打开日志目录")
+        self.btn_open_logs.setFixedHeight(36)
+        self.btn_open_logs.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_open_logs.clicked.connect(self._open_logs_dir)
+
         btn_layout.addWidget(self.btn_start, stretch=2)
         btn_layout.addWidget(self.btn_stop, stretch=1)
         btn_layout.addWidget(self.btn_open_folder, stretch=1)
+        btn_layout.addWidget(self.btn_open_logs, stretch=1)
         layout.addLayout(btn_layout)
 
         # 进度条与状态详情
@@ -652,3 +658,14 @@ class QtMainWindow(QMainWindow):
             os.startfile(OUTPUT_DIR)
         else:
             subprocess.run(['xdg-open', OUTPUT_DIR])
+
+    def _open_logs_dir(self):
+        import subprocess
+        from utils.config import LOG_DIR
+        os.makedirs(LOG_DIR, exist_ok=True)
+        if sys.platform == 'darwin':
+            subprocess.run(['open', LOG_DIR])
+        elif sys.platform == 'win32':
+            os.startfile(LOG_DIR)
+        else:
+            subprocess.run(['xdg-open', LOG_DIR])
