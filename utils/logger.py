@@ -143,6 +143,15 @@ class ReportLogger:
         print(f"[日志系统] 日志目录: {log_dir}")
         print(f"[日志系统] 界面日志级别: {logging.getLevelName(console_level)}")
 
+    def add_extra_handler(self, handler):
+        """添加额外的全局日志处理器（如 Qt 界面日志桥接处理器）"""
+        for logger in self._loggers.values():
+            if handler not in logger.handlers:
+                logger.addHandler(handler)
+        self._extra_handlers = getattr(self, '_extra_handlers', [])
+        if handler not in self._extra_handlers:
+            self._extra_handlers.append(handler)
+
     def get_logger(self, report_name, file_level=logging.DEBUG, console_level=None):
         """获取指定报表的日志记录器
 
@@ -161,6 +170,11 @@ class ReportLogger:
         logger = logging.getLogger(report_name)
         logger.setLevel(logging.DEBUG)
         logger.propagate = False
+
+        # 挂接额外注册的全局界面处理器（如 QtLogHandler）
+        for h in getattr(self, '_extra_handlers', []):
+            if h not in logger.handlers:
+                logger.addHandler(h)
 
         # 界面日志处理器（简洁）
         if console_level is None:
@@ -219,6 +233,11 @@ def setup_report_logging(log_dir, console=True, console_level=logging.INFO):
         console_level: 界面日志级别（默认INFO，仅显示普通信息）
     """
     _report_logger.setup_logging(log_dir, console, console_level)
+
+
+def add_report_logger_handler(handler):
+    """为报表日志系统添加额外的 Handler（支持 Qt 日志实时桥接）"""
+    _report_logger.add_extra_handler(handler)
 
 
 def get_report_logger(report_name, file_level=logging.DEBUG, console_level=None):

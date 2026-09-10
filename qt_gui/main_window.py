@@ -22,6 +22,7 @@ from qt_gui.components.date_range_picker import QtDateRangePicker
 from qt_gui.components.multi_select_combo import QtMultiSelectCombo
 from qt_gui.components.log_panel import QtLogViewer
 from qt_gui.components.week_selector import QtWeekSelector
+from qt_gui.components.qt_log_handler import QtLogBridge, QtLoggingHandler
 
 from gui.widgets import TableConfig
 from core.auth import LoginManager
@@ -67,7 +68,28 @@ class QtMainWindow(QMainWindow):
         self.bridge.main_call_signal.connect(lambda fn: fn())
 
         self._init_ui()
+        self._setup_global_logging()
         self._init_state()
+
+    def _setup_global_logging(self):
+        """挂载全量日志拦截器：将标准 logging 的所有模块日志全量桥接到 QtLogViewer"""
+        import logging
+        from utils.logger import add_report_logger_handler
+        self.qt_log_bridge = QtLogBridge()
+        self.qt_log_bridge.log_emitted.connect(self._on_log_received)
+        self.qt_log_handler = QtLoggingHandler(self.qt_log_bridge)
+        self.qt_log_handler.setLevel(logging.INFO)
+
+        # 1. 挂接到 ReportLogger（负责 get_table/get_table_count/各类报表的业务提取日志）
+        add_report_logger_handler(self.qt_log_handler)
+
+        # 2. 挂接到各核心模块 logger，不重复挂接 root 避免向上传播重复
+        for logger_name in ['core', 'core.query', 'core.workers', 'core.data_fetcher_mixin', 'core.session_mixin', 'utils', 'QueryModule']:
+            lg = logging.getLogger(logger_name)
+            lg.setLevel(logging.INFO)
+            if self.qt_log_handler not in lg.handlers:
+                lg.addHandler(self.qt_log_handler)
+            lg.propagate = False
 
     def _init_ui(self):
         central_widget = QWidget(self)
@@ -563,11 +585,18 @@ class QtMainWindow(QMainWindow):
                     self.bridge.log_signal.emit(traceback.format_exc(), "ERROR")
             self.bridge.main_call_signal.emit(_target)
 
+        def _safe_progress_emit(cur, tot, det=""):
+            """安全发射进度信号到 Qt 主线程"""
+            try:
+                self.bridge.progress_signal.emit(float(cur), float(tot), str(det))
+            except Exception:
+                pass
+
         self.query_worker = QueryWorker(
             session=self.session,
             jxcx=self.jxcx,
             log_func=lambda msg, lvl="INFO": self._safe_log_emit(msg, lvl),
-            progress_func=lambda cur, tot, det="": self.bridge.progress_signal.emit(cur, tot, det),
+            progress_func=_safe_progress_emit,
             after_func=_schedule_main,
             field_mode_var=_Var('hardcode' if self.radio_hardcode.isChecked() else 'dynamic'),
             custom_fields_var=_Var(False),

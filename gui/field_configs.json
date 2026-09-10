@@ -7367,7 +7367,7 @@
   {
    "feild": "nrcell_name",
    "feildName": "小区名称",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7376,7 +7376,7 @@
   {
    "feild": "ncgi",
    "feildName": "NCGI",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7385,7 +7385,7 @@
   {
    "feild": "site_name",
    "feildName": "站点名称",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7394,7 +7394,7 @@
   {
    "feild": "day",
    "feildName": "日期",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7403,7 +7403,7 @@
   {
    "feild": "hour",
    "feildName": "时间",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7412,7 +7412,7 @@
   {
    "feild": "du_kpi_dtchprbassnrateul",
    "feildName": "DU_上行PRB平均利用率",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7421,7 +7421,7 @@
   {
    "feild": "du_kpi_dtchprbassnratedl",
    "feildName": "DU_下行PRB平均利用率",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7430,7 +7430,7 @@
   {
    "feild": "cu_kpi_pdcpupoctul",
    "feildName": "CU_PDCP上行业务字节数",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7439,7 +7439,7 @@
   {
    "feild": "cu_kpi_pdcpupoctdl",
    "feildName": "CU_PDCP下行业务字节数",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7448,7 +7448,7 @@
   {
    "feild": "is_sav",
    "feildName": "是否节电",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7457,7 +7457,7 @@
   {
    "feild": "is_old_sav",
    "feildName": "是否过晚节电",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
@@ -7466,7 +7466,7 @@
   {
    "feild": "cu_rrc_connmax",
    "feildName": "最大连接用户数",
-   "datatype": "character varying",
+   "datatype": "character+varying",
    "columntype": "1",
    "feildtype": "节电小区_性能_NR_过晚节电小区",
    "table": "appdbv3.a_powersav_pm_sa_oldcell_d",
