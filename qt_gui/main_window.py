@@ -540,7 +540,7 @@ class QtMainWindow(QMainWindow):
         self.query_worker = QueryWorker(
             session=self.session,
             jxcx=self.jxcx,
-            log_func=lambda msg, lvl="INFO": self.bridge.log_signal.emit(str(msg), lvl),
+            log_func=lambda msg, lvl="INFO": self._safe_log_emit(msg, lvl),
             progress_func=lambda cur, tot, det="": self.bridge.progress_signal.emit(cur, tot, det),
             after_func=_schedule_main,
             field_mode_var=_Var('hardcode' if self.radio_hardcode.isChecked() else 'dynamic'),
@@ -553,14 +553,27 @@ class QtMainWindow(QMainWindow):
         )
 
         def _bg_run():
-            self.query_worker.query_worker(
-                tables, start_date, end_date, city_str,
-                on_complete=lambda: self.bridge.finished_signal.emit(True),
-                on_failed=lambda: self.bridge.finished_signal.emit(False),
-            )
+            try:
+                self.query_worker.query_worker(
+                    tables, start_date, end_date, city_str,
+                    on_complete=lambda: self.bridge.finished_signal.emit(True),
+                    on_failed=lambda: self.bridge.finished_signal.emit(False),
+                )
+            except Exception:
+                import traceback
+                self.bridge.log_signal.emit(f"查询流程异常: {traceback.format_exc()}", "ERROR")
+                self.bridge.finished_signal.emit(False)
 
         self.worker_thread = threading.Thread(target=_bg_run, daemon=True)
         self.worker_thread.start()
+
+    def _safe_log_emit(self, msg, lvl="INFO"):
+        """从后台线程安全地发射日志信号到 Qt 主线程"""
+        try:
+            self.bridge.log_signal.emit(str(msg), lvl)
+        except Exception:
+            import traceback
+            self.bridge.log_signal.emit(f"日志回调异常: {traceback.format_exc()}", "ERROR")
 
     def _on_start_synthesize(self):
         """合成45G流量表任务"""

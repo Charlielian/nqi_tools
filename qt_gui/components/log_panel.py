@@ -12,12 +12,15 @@ from PyQt6.QtCore import Qt, pyqtSlot
 class QtLogViewer(QWidget):
     """带级别彩色高亮、自动滚动与一键清空复制的日志面板"""
 
+    # 亮色主题下使用深色正文 + 清晰色块，保证白底可读
     COLOR_MAP = {
-        'INFO': QColor('#4080FF'),      # 科技蓝
-        'SUCCESS': QColor('#00B42A'),   # 成功绿
-        'WARNING': QColor('#FF7D00'),   # 警告橙
-        'ERROR': QColor('#F53F3F'),     # 错误红
+        'INFO': QColor('#1D4ED8'),      # 深蓝（白底可读）
+        'SUCCESS': QColor('#15803D'),   # 深绿（白底可读）
+        'WARNING': QColor('#B45309'),   # 深橙（白底可读）
+        'ERROR': QColor('#DC2626'),     # 深红（白底可读）
     }
+    # 消息正文颜色（白底主题下为深灰，暗色主题下由暗色 QSS 覆盖为亮色）
+    MESSAGE_COLOR = QColor('#1F2328')
 
     def __init__(self, parent=None, max_lines: int = 1500):
         super().__init__(parent)
@@ -81,7 +84,7 @@ class QtLogViewer(QWidget):
 
         # 消息正文
         fmt_msg = QTextCharFormat()
-        fmt_msg.setForeground(QColor('#FFFFFF' if lvl in ('SUCCESS', 'INFO') else color))
+        fmt_msg.setForeground(self.MESSAGE_COLOR)
         cursor.insertText(f"{message}\n", fmt_msg)
 
         # 滚至末尾
