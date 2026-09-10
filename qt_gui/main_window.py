@@ -429,18 +429,32 @@ class QtMainWindow(QMainWindow):
         self.btn_login.setEnabled(False)
 
         def _bg_check():
-            from core.auth import load_cookie
-            saved_cookie = load_cookie(self.login_manager.username)
-            if saved_cookie:
-                self.login_manager.sess.cookies = saved_cookie
-                # 用更严谨的 JXCX 可访问性校验（进入即席查询模块成功才算有效）
-                probe_query = JXCXQuery(session=self.login_manager.sess)
-                if probe_query.enter_jxcx():
-                    self.session = self.login_manager.sess
-                    self.jxcx = probe_query
-                    self.bridge.log_signal.emit("✓ 使用已保存的Cookie成功免密登录！", "SUCCESS")
-                    QTimer.singleShot(0, self._on_login_ui_success)
-                    return
+            try:
+                from core.auth import load_cookie
+                username = self.login_manager.username
+                self.bridge.log_signal.emit(f"正在检查账号 [{username}] 的本地凭据...", "INFO")
+                saved_cookie = load_cookie(username)
+                if saved_cookie:
+                    self.login_manager.sess.cookies = saved_cookie
+                    # 先用统一认证中心接口探活
+                    if self.login_manager._check_session():
+                        # 再进入 JXCX 即席查询模块建立模块会话（超时控制在 10s 内，避免阻塞卡在正在检查）
+                        probe_query = JXCXQuery(session=self.login_manager.sess)
+                        if probe_query.enter_jxcx(retry_times=1, timeout=10):
+                            self.session = self.login_manager.sess
+                            self.jxcx = probe_query
+                            self.bridge.log_signal.emit(f"✓ 成功复用有效 Cookie 免密登录 [{username}]！", "SUCCESS")
+                            QTimer.singleShot(0, self._on_login_ui_success)
+                            return
+                        else:
+                            self.bridge.log_signal.emit("Cookie 统一认证仍有效，但进入 JXCX 失败，准备重新登录获取新凭据...", "WARNING")
+                    else:
+                        self.bridge.log_signal.emit("本地已保存的 Cookie 已过期，正在呼出安全认证窗口...", "WARNING")
+                else:
+                    self.bridge.log_signal.emit(f"未找到 [{username}] 的有效本地凭据，正在呼出安全认证窗口...", "INFO")
+            except Exception as e:
+                import traceback
+                self.bridge.log_signal.emit(f"检查 Cookie 出错: {e}", "ERROR")
 
             # 需要弹窗完成图形验证码 + 短信验证码
             QTimer.singleShot(0, self._open_login_dialog)
@@ -480,6 +494,10 @@ class QtMainWindow(QMainWindow):
     def _on_start_query(self):
         """开始提取任务"""
         if self.is_querying:
+            return
+
+        if not self.session or not self.jxcx:
+            QMessageBox.warning(self, "提示", "请等待登录成功或点击右上角【执行登录】后再开始提取！")
             return
 
         tables = self.combo_tables.get_selected()
