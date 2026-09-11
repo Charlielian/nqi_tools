@@ -450,6 +450,11 @@ class QtMainWindow(QMainWindow):
         self.status_text.setText("正在检查登录状态...")
         self.btn_login.setEnabled(False)
 
+        # 防止上一次启动遗留的检查线程重复运行
+        if getattr(self, '_login_check_thread', None) and self._login_check_thread.is_alive():
+            self.log_viewer.append_log("登录状态检查已经在后台进行，请稍候...", "WARNING")
+            return
+
         def _bg_check():
             try:
                 from core.auth import load_cookie
@@ -466,7 +471,7 @@ class QtMainWindow(QMainWindow):
                             self.session = self.login_manager.sess
                             self.jxcx = probe_query
                             self.bridge.log_signal.emit(f"✓ 成功复用有效 Cookie 免密登录 [{username}]！", "SUCCESS")
-                            QTimer.singleShot(0, self._on_login_ui_success)
+                            self._schedule_ui_call(self._on_login_ui_success)
                             return
                         else:
                             self.bridge.log_signal.emit("Cookie 统一认证仍有效，但进入 JXCX 失败，准备重新登录获取新凭据...", "WARNING")
@@ -479,9 +484,10 @@ class QtMainWindow(QMainWindow):
                 self.bridge.log_signal.emit(f"检查 Cookie 出错: {e}", "ERROR")
 
             # 需要弹窗完成图形验证码 + 短信验证码
-            QTimer.singleShot(0, self._open_login_dialog)
+            self._schedule_ui_call(self._open_login_dialog)
 
-        threading.Thread(target=_bg_check, daemon=True).start()
+        self._login_check_thread = threading.Thread(target=_bg_check, daemon=True)
+        self._login_check_thread.start()
 
     def _open_login_dialog(self):
         """弹出图形验证码与短信验证码登录窗口"""
@@ -611,16 +617,25 @@ class QtMainWindow(QMainWindow):
             try:
                 self.query_worker.query_worker(
                     tables, start_date, end_date, city_str,
-                    on_complete=lambda: self.bridge.finished_signal.emit(True),
-                    on_failed=lambda: self.bridge.finished_signal.emit(False),
+                    on_complete=lambda: self._schedule_ui_call(lambda: self._on_query_finished(True)),
+                    on_failed=lambda: self._schedule_ui_call(lambda: self._on_query_finished(False)),
                 )
             except Exception:
                 import traceback
-                self.bridge.log_signal.emit(f"查询流程异常: {traceback.format_exc()}", "ERROR")
-                self.bridge.finished_signal.emit(False)
+                error_text = traceback.format_exc()
+                self.bridge.log_signal.emit(f"查询流程异常: {error_text}", "ERROR")
+                self._schedule_ui_call(lambda: self._on_query_finished(False))
+
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.log_viewer.append_log("查询线程仍在后台运行，暂不重复启动", "WARNING")
+            return
 
         self.worker_thread = threading.Thread(target=_bg_run, daemon=True)
         self.worker_thread.start()
+
+    def _schedule_ui_call(self, fn):
+        """通过 Qt 信号将 UI 状态更新安全投递到主线程"""
+        self.bridge.main_call_signal.emit(fn)
 
     def _safe_log_emit(self, msg, lvl="INFO"):
         """从后台线程安全地发射日志信号到 Qt 主线程"""
