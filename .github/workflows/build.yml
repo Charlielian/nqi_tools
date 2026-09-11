@@ -28,13 +28,18 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Clean PyInstaller output
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force build, dist, release -ErrorAction SilentlyContinue
+
       - name: Build Tkinter Version EXE
         run: |
-          pyinstaller NqiTool.spec
+          pyinstaller --clean NqiTool.spec
 
       - name: Build Qt6 Version EXE
         run: |
-          pyinstaller NqiTool_qt.spec
+          pyinstaller --clean NqiTool_qt.spec
 
       - name: Prepare release package
         shell: pwsh
