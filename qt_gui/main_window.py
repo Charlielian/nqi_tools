@@ -65,11 +65,19 @@ class QtMainWindow(QMainWindow):
         self.bridge.log_signal.connect(self._on_log_received)
         self.bridge.progress_signal.connect(self._on_progress_received)
         self.bridge.finished_signal.connect(self._on_query_finished)
-        self.bridge.main_call_signal.connect(lambda fn: fn())
+        self.bridge.main_call_signal.connect(self._run_main_call)
 
         self._init_ui()
         self._setup_global_logging()
         self._init_state()
+
+    def _run_main_call(self, fn):
+        """执行从后台线程排队投递的主线程 UI 回调"""
+        try:
+            fn()
+        except Exception:
+            import traceback
+            self._on_log_received(traceback.format_exc(), "ERROR")
 
     def _setup_global_logging(self):
         """挂载全量日志拦截器：将标准 logging 的所有模块日志全量桥接到 QtLogViewer"""
@@ -471,7 +479,7 @@ class QtMainWindow(QMainWindow):
                             self.session = self.login_manager.sess
                             self.jxcx = probe_query
                             self.bridge.log_signal.emit(f"✓ 成功复用有效 Cookie 免密登录 [{username}]！", "SUCCESS")
-                            self._schedule_ui_call(self._on_login_ui_success)
+                            self.bridge.main_call_signal.emit(self._on_login_ui_success)
                             return
                         else:
                             self.bridge.log_signal.emit("Cookie 统一认证仍有效，但进入 JXCX 失败，准备重新登录获取新凭据...", "WARNING")
@@ -484,7 +492,7 @@ class QtMainWindow(QMainWindow):
                 self.bridge.log_signal.emit(f"检查 Cookie 出错: {e}", "ERROR")
 
             # 需要弹窗完成图形验证码 + 短信验证码
-            self._schedule_ui_call(self._open_login_dialog)
+            self.bridge.main_call_signal.emit(self._open_login_dialog)
 
         self._login_check_thread = threading.Thread(target=_bg_check, daemon=True)
         self._login_check_thread.start()
