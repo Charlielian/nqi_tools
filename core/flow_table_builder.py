@@ -1184,17 +1184,26 @@ class FlowTableBuilder:
         return True
 
 
-def synthesize_45g_flow_table(session, city, week_start_date, progress_callback=None):
-    """合成45G流量表的主入口函数
-    
-    Args:
-        session: 已登录的requests Session
-        city: 地市列表，逗号分隔
-        week_start_date: 周开始日期（周一），datetime对象
-        progress_callback: 进度回调函数 callback(message)
-        
-    Returns:
-        bool: 是否成功
-    """
-    builder = FlowTableBuilder(session, city, week_start_date, progress_callback)
+def synthesize_45g_flow_table(session, city, start_date, end_date=None, progress_callback=None):
+    """按选定起止日期合成45G流量表；省略结束日期时兼容旧的周入口。"""
+    # 兼容旧调用 synthesize_45g_flow_table(session, city, week_start, callback)
+    if callable(end_date) and progress_callback is None:
+        progress_callback = end_date
+        end_date = None
+
+    if isinstance(start_date, str):
+        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+    elif isinstance(start_date, datetime):
+        start_date = start_date.date()
+
+    if end_date is not None:
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        elif isinstance(end_date, datetime):
+            end_date = end_date.date()
+
+    builder = FlowTableBuilder(session, city, start_date, progress_callback)
+    if end_date is not None:
+        builder.end_date = end_date.strftime('%Y-%m-%d')
+        builder.week_num = get_week_number(builder.start_date)
     return builder.run()

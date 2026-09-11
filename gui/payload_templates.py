@@ -1469,13 +1469,51 @@ def get_5g_kpi_payload(start_date=None, end_date=None, city=None):
 
 # ==================== 4G KPI ====================
 def get_4g_kpi_payload(start_date=None, end_date=None, city=None):
-    """4G小区KPI报表payload (基于HAR抓包的正确配置)
-    
-    Args:
-        start_date: 开始日期 (YYYY-MM-DD)，按日查询时为单日
-        end_date: 结束日期 (YYYY-MM-DD)，按日查询时与start_date相同
-        city: 地市名称
-    """
+    """4G小区KPI报表payload，字段元数据与 HAR 中的 160 列保持一致。"""
+    from gui.field_configs import KPI_4G_FIELDS
+
+    if start_date is None:
+        start_date = '2026-04-19'
+    if end_date is None:
+        end_date = start_date
+    if city is None:
+        city = '阳江'
+
+    result_list = []
+    for field in KPI_4G_FIELDS:
+        item = {
+            'feildtype': field['feildtype'],
+            'table': field['table'],
+            'tableName': field['tableName'],
+            'datatype': field['datatype'],
+            'columntype': field['columntype'],
+            'feildName': field['feildName'],
+            'feild': field['feild'],
+            'poly': '无',
+            'anyWay': '无',
+            'chart': '无',
+            'chartpoly': '无',
+        }
+        result_list.append(item)
+
+    field_names = [field['feild'] for field in KPI_4G_FIELDS]
+    return {
+        'draw': 1, 'start': 0, 'length': 200, 'total': 0,
+        'geographicdimension': '小区，网格，地市，分公司',
+        'timedimension': '小时,天,周.月,忙时,15分钟',
+        'enodebField': 'enodeb_id', 'cgiField': 'cgi',
+        'timeField': 'starttime', 'cellField': 'cell', 'cityField': 'city',
+        'columns': _build_columns_param(field_names),
+        'order': [{'column': 0, 'dir': 'desc'}],
+        'search': {'value': '', 'regex': False},
+        'result': {'result': result_list, 'tableParams': {'supporteddimension': None, 'supportedtimedimension': ''}, 'columnname': ''},
+        'where': [
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '>=', 'val': f'{start_date} 00:00:00', 'whereCon': 'and', 'query': True},
+            {'datatype': 'timestamp', 'feild': 'starttime', 'feildName': '', 'symbol': '<', 'val': f'{end_date} 23:59:59', 'whereCon': 'and', 'query': True},
+            {'datatype': 'character', 'feild': 'city', 'feildName': '', 'symbol': 'in', 'val': city, 'whereCon': 'and', 'query': True},
+        ],
+        'indexcount': 0,
+    }
     # 公共信息（小区级粒度）- 基于HAR抓包
     public_fields = [
         ('starttime', '开始时间'), ('endtime', '结束时间'), ('cgi', 'CGI'),

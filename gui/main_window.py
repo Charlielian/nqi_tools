@@ -672,16 +672,8 @@ class NqiToolGUI:
         """
         selected = self.table_dropdown.get_selected()
 
-        # 检查是否选中了合成45G流量表
-        is_synthesize = '合成45G流量表' in selected
-
-        if is_synthesize:
-            # 显示周选择器，隐藏日期选择器
-            self.week_selector_container.pack(fill=tk.X, pady=(8, 0))
-            # 可以考虑隐藏日期区域，但暂时保留
-        else:
-            # 隐藏周选择器
-            self.week_selector_container.pack_forget()
+        # 45G与其他报表统一使用日期范围，不再切换周选择器
+        self.week_selector_container.pack_forget()
 
     def _show_help(self):
         """显示帮助信息"""
@@ -791,15 +783,9 @@ F1        - 显示此帮助
 
     def _on_table_selection_changed(self, selected_tables):
         """表格选择变化事件"""
-        # 检查是否选择了合成45G流量表
-        if '合成45G流量表' in selected_tables:
-            # 显示周选择器，隐藏日期选择器
-            self.week_selector_container.pack(fill=tk.X, pady=(8, 0))
-            self.date_row.pack_forget()  # 隐藏日期范围选择
-        else:
-            # 隐藏周选择器，显示日期选择器
-            self.week_selector_container.pack_forget()
-            self.date_row.pack(fill=tk.X, pady=(0, 6))  # 显示日期范围选择
+        # 合成45G与普通报表统一使用日期范围选择器，不再切换独立周选择器
+        self.week_selector_container.pack_forget()
+        self.date_row.pack(fill=tk.X, pady=(0, 6))
 
     def _on_field_mode_changed(self):
         """字段获取方式切换事件"""
@@ -1245,11 +1231,10 @@ F1        - 显示此帮助
             messagebox.showwarning("警告", "请先登录")
             return
 
-        # 获取周选择器中的日期范围
-        week_start = self.week_selector.get_week_start()
-        if not week_start:
-            messagebox.showwarning("警告", "请选择周")
-            return
+        # 获取统一日期范围选择器中的日期
+        start_date, end_date = self.date_range_picker.get_range()
+        start_dt, _ = _parse_date_range(start_date, end_date)
+        week_start = start_dt
 
         # 获取选中的地市
         selected_cities = self.city_dropdown.get_selected()
@@ -1264,22 +1249,22 @@ F1        - 显示此帮助
         # 重置进度条
         self.reset_progress()
 
-        start_date, end_date = self.week_selector.get_date_range()
+        start_date, end_date = self.date_range_picker.get_range()
         self.log("=" * 60, "INFO")
         self.log("开始合成45G流量表", "INFO")
-        self.log(f"周范围: {start_date} 至 {end_date}", "INFO")
+        self.log(f"日期范围: {start_date} 至 {end_date}", "INFO")
         self.log(f"地市: {city if city else '全部'}", "INFO")
         self.log("=" * 60, "INFO")
 
         # 启动合成线程
         self.query_thread = threading.Thread(
             target=self._synthesize_worker,
-            args=(week_start, city)
+            args=(start_date, end_date, city)
         )
         self.query_thread.daemon = True
         self.query_thread.start()
 
-    def _synthesize_worker(self, week_start, city):
+    def _synthesize_worker(self, start_date, end_date, city):
         """合成45G流量表工作线程"""
         try:
             from core.flow_table_builder import synthesize_45g_flow_table
@@ -1292,7 +1277,8 @@ F1        - 显示此帮助
             success = synthesize_45g_flow_table(
                 self.session,
                 city,
-                week_start,
+                start_date,
+                end_date,
                 progress_callback
             )
 

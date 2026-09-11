@@ -198,7 +198,8 @@ class QueryWorker:
         payload_template = payload_func()
         if payload_template and payload_template.get('__gongcan__'):
             self._handle_gongcan(
-                table_config, payload_template, table_name, city
+                table_config, payload_template, table_name, city,
+                idx, total_tables
             )
             return
 
@@ -243,14 +244,13 @@ class QueryWorker:
             else:
                 self.log(f"查询结果为空: {table_name}", "WARNING")
 
-    def _handle_gongcan(self, table_config, payload_template, table_name, city):
-        """处理工参报表"""
-        self.log("工参报表: 使用table类型API", "INFO")
+    def _build_gongcan_payload(self, table_config, payload_template, city):
+        """构建工参表的 table 类型 payload（city 可为单个或多个地市）"""
         conditions = table_config.get('default_conditions', []).copy()
         if city:
             conditions.append({'field': 'city', 'operator': 'in', 'value': city})
 
-        gongcan_payload = self.jxcx.build_payload_from_config(
+        return self.jxcx.build_payload_from_config(
             payload_template.get('table_key'),
             payload_template.get('fieldtype'),
             conditions,
@@ -265,17 +265,76 @@ class QueryWorker:
                 'cityField': payload_template.get('cityField', '')
             }
         )
-        if gongcan_payload:
-            df = self.jxcx.get_table(gongcan_payload, report_name=table_name)
-            if not df.empty:
-                filename = f"{table_name}.xlsx"
-                filepath = export_to_excel(df, filename, table_name)
-                if filepath:
-                    self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-                else:
-                    self.log(f"导出失败: {table_name}", "ERROR")
-            else:
-                self.log(f"查询结果为空: {table_name}", "WARNING")
+
+    def _query_and_export_gongcan(self, table_config, payload_template,
+                                  table_name, city, filename):
+        """查询单个地市（或全部）的工参数据并导出为指定文件
+
+        Returns:
+            bool: 是否成功导出
+        """
+        gongcan_payload = self._build_gongcan_payload(
+            table_config, payload_template, city
+        )
+        if not gongcan_payload:
+            self.log(f"payload 构建失败: {table_name}", "ERROR")
+            return False
+
+        df = self.jxcx.get_table(gongcan_payload, report_name=table_name)
+        if df.empty:
+            self.log(f"查询结果为空: {filename}", "WARNING")
+            return False
+
+        filepath = export_to_excel(df, filename, table_name)
+        if filepath:
+            self.log(f"数据已导出到: {os.path.basename(filepath)} ({len(df)} 条)", "SUCCESS")
+            return True
+        self.log(f"导出失败: {filename}", "ERROR")
+        return False
+
+    def _handle_gongcan(self, table_config, payload_template, table_name, city,
+                        idx=None, total_tables=None):
+        """处理工参报表
+
+        选中多个地市时，按地市分别查询并各自导出独立文件
+        （文件名形如 ``{表名}_{地市}.xlsx``）；仅一个地市或未选地市时，
+        保持原有单文件导出行为。
+        """
+        self.log("工参报表: 使用table类型API", "INFO")
+
+        city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
+
+        if len(city_list) <= 1:
+            single_city = city_list[0] if city_list else ''
+            self._query_and_export_gongcan(
+                table_config, payload_template, table_name,
+                single_city, f"{table_name}.xlsx"
+            )
+            return
+
+        self.log(f"工参报表按地市拆分导出: 共 {len(city_list)} 个地市", "INFO")
+        succeeded = 0
+        for order, one_city in enumerate(city_list, start=1):
+            if self.jxcx.is_cancelled():
+                self.log("收到取消请求，停止导出剩余地市", "WARNING")
+                break
+
+            if idx is not None and total_tables:
+                self._update_progress(
+                    idx + (order - 1) / len(city_list), total_tables,
+                    f"查询 {table_name} [{order}/{len(city_list)}] {one_city}"
+                )
+
+            if self._query_and_export_gongcan(
+                table_config, payload_template, table_name,
+                one_city, f"{table_name}_{one_city}.xlsx"
+            ):
+                succeeded += 1
+
+        self.log(
+            f"工参报表按地市导出完成: 成功 {succeeded}/{len(city_list)} 个地市",
+            "SUCCESS" if succeeded else "WARNING"
+        )
 
     def _handle_multi_day_payload_func(self, payload_func, table_name, city,
                                        start_date, end_date, idx, total_tables,
@@ -416,32 +475,63 @@ class QueryWorker:
             return
 
         if is_gongcan:
-            conditions = table_config.get('default_conditions', []).copy()
-            if city:
-                conditions.append({'field': 'city', 'operator': 'in', 'value': city})
-            payload = self.jxcx.build_payload_from_config(
-                table_config['table_key'],
-                table_config['fieldtype'],
-                conditions,
-                table_config['api_type'],
-                dimension_override=dimension if dimension else None,
-                fields_override=fields,
-                table_name=table_config.get('table_name'),
-                table_params=table_config.get('tableParams'),
-                indexcount=table_config.get('indexcount', 0)
-            )
-            if payload:
-                df = self.jxcx.get_table(payload, report_name=table_name)
-                if not df.empty:
-                    df = self.apply_custom_fields(df, table_name)
-                    filename = f"{table_name}_{start_date}_{end_date}.xlsx"
-                    filepath = export_to_excel(df, filename, table_name)
-                    if filepath:
-                        self.log(f"数据已导出到: {os.path.basename(filepath)}", "SUCCESS")
-                    else:
-                        self.log(f"导出失败: {table_name}", "ERROR")
+            city_list = [item.strip() for item in city.split(',') if item.strip()] if city else []
+            # 多选地市时按地市拆分导出，单个/未选地市保持原单文件行为
+            city_targets = city_list if len(city_list) > 1 else [city_list[0] if city_list else '']
+            if len(city_targets) > 1:
+                self.log(f"工参报表按地市拆分导出: 共 {len(city_targets)} 个地市", "INFO")
+
+            succeeded = 0
+            for order, one_city in enumerate(city_targets, start=1):
+                if self.jxcx.is_cancelled():
+                    self.log("收到取消请求，停止导出剩余地市", "WARNING")
+                    break
+
+                conditions = table_config.get('default_conditions', []).copy()
+                if one_city:
+                    conditions.append({'field': 'city', 'operator': 'in', 'value': one_city})
+                payload = self.jxcx.build_payload_from_config(
+                    table_config['table_key'],
+                    table_config['fieldtype'],
+                    conditions,
+                    table_config['api_type'],
+                    dimension_override=dimension if dimension else None,
+                    fields_override=fields,
+                    table_name=table_config.get('table_name'),
+                    table_params=table_config.get('tableParams'),
+                    indexcount=table_config.get('indexcount', 0)
+                )
+                if not payload:
+                    continue
+
+                if len(city_targets) > 1:
+                    filename = f"{table_name}_{one_city}.xlsx"
+                    if idx is not None and total_tables:
+                        self._update_progress(
+                            idx + (order - 1) / len(city_targets), total_tables,
+                            f"查询 {table_name} [{order}/{len(city_targets)}] {one_city}"
+                        )
                 else:
-                    self.log(f"查询结果为空: {table_name}", "WARNING")
+                    filename = f"{table_name}_{start_date}_{end_date}.xlsx"
+
+                df = self.jxcx.get_table(payload, report_name=table_name)
+                if df.empty:
+                    self.log(f"查询结果为空: {filename}", "WARNING")
+                    continue
+
+                df = self.apply_custom_fields(df, table_name)
+                filepath = export_to_excel(df, filename, table_name)
+                if filepath:
+                    self.log(f"数据已导出到: {os.path.basename(filepath)} ({len(df)} 条)", "SUCCESS")
+                    succeeded += 1
+                else:
+                    self.log(f"导出失败: {filename}", "ERROR")
+
+            if len(city_targets) > 1:
+                self.log(
+                    f"工参报表按地市导出完成: 成功 {succeeded}/{len(city_targets)} 个地市",
+                    "SUCCESS" if succeeded else "WARNING"
+                )
             return
 
         # 非工参报表：按日查询

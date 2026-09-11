@@ -242,11 +242,6 @@ class QtMainWindow(QMainWindow):
 
         layout.addWidget(self.row2_widget)
 
-        # 周选择器容器 (平时隐藏，选合成45G流量表时显示)
-        self.week_selector = QtWeekSelector(self)
-        self.week_selector.setVisible(False)
-        layout.addWidget(self.week_selector)
-
         # 第三行：参数模式与选项
         row3 = QHBoxLayout()
         row3.setSpacing(20)
@@ -428,10 +423,9 @@ class QtMainWindow(QMainWindow):
         self.combo_tables.set_items(matched)
 
     def _on_table_selection_changed(self, selected_tables: List[str]):
-        """表格选中变化：如果包含合成45G流量表则显示周选择器并隐藏普通日期选择"""
-        is_synthesize = '合成45G流量表' in selected_tables
-        self.week_selector.setVisible(is_synthesize)
-        self.row2_widget.setVisible(not is_synthesize)
+        """45G合成与其他报表统一使用日期范围选择器"""
+        # 不再切换或显示独立周选择器；保留日期范围行始终可见。
+        self.row2_widget.setVisible(True)
 
     def _apply_quick_date(self, tag: str):
         today = datetime.now().date()
@@ -659,10 +653,9 @@ class QtMainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请先登录统一认证平台！")
             return
 
-        week_start = self.week_selector.get_week_start()
+        start_date, end_date = self.date_picker.get_range()
         cities = self.combo_city.get_selected()
         city_str = ",".join(cities) if cities else ""
-        mon_str, sun_str = self.week_selector.get_date_range()
 
         self.is_querying = True
         self.btn_start.setEnabled(False)
@@ -672,7 +665,7 @@ class QtMainWindow(QMainWindow):
 
         self.log_viewer.append_log("=" * 50, "INFO")
         self.log_viewer.append_log("开始执行合成 45G 流量表业务流程", "INFO")
-        self.log_viewer.append_log(f"周区间: {mon_str} 至 {sun_str} | 地市: {city_str or '全部'}", "INFO")
+        self.log_viewer.append_log(f"日期范围: {start_date} 至 {end_date} | 地市: {city_str or '全部'}", "INFO")
         self.log_viewer.append_log("=" * 50, "INFO")
 
         def _worker():
@@ -681,14 +674,15 @@ class QtMainWindow(QMainWindow):
                 success = synthesize_45g_flow_table(
                     self.session,
                     city_str,
-                    week_start,
+                    start_date,
+                    end_date,
                     progress_callback=lambda m: self.bridge.log_signal.emit(m, "INFO")
                 )
-                self.bridge.finished_signal.emit(success)
-            except Exception as e:
+                self._schedule_ui_call(lambda: self._on_query_finished(success))
+            except Exception:
                 import traceback
                 self.bridge.log_signal.emit(f"合成异常: {traceback.format_exc()}", "ERROR")
-                self.bridge.finished_signal.emit(False)
+                self._schedule_ui_call(lambda: self._on_query_finished(False))
 
         threading.Thread(target=_worker, daemon=True).start()
 
