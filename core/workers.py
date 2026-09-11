@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import requests
 
-from core.export import export_to_excel, normalize_excel_rows
+from core.export import export_to_excel, export_dataframe_streaming, normalize_excel_rows
 from core.query import JXCXQuery
 from gui.calculators import (
     add_4g_voice_calc_columns,

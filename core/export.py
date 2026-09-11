@@ -72,19 +72,17 @@ def export_to_excel(data, filename, sheet_name='Sheet1', append=False, apply_for
             # 一次性格式化导出（xlsxwriter，快3-5倍）
             return export_with_format(df, filename, sheet_name)
         else:
-            # 快速模式：直接写入
+            # 快速模式：一次性新建工作簿统一使用 xlsxwriter 流式写入。
+            # openpyxl 仅保留给“向已有工作簿追加 Sheet”的兼容路径。
             if append and os.path.exists(filepath):
-                # openpyxl 才能在已有 xlsx 中保留工作簿并追加 sheet；xlsxwriter
-                # 是只写引擎，不能读取已有文件再追加。非追加路径也明确指定
-                # openpyxl，保持普通快速导出的兼容行为。
                 with pd.ExcelWriter(filepath, engine='openpyxl', mode='a') as writer:
                     df.to_excel(writer, sheet_name=sheet_name, index=False)
                 logger.info("已追加数据到 %s", filepath)
-            else:
-                df.to_excel(filepath, sheet_name=sheet_name, index=False, engine='openpyxl')
-                logger.info("数据已快速导出到 %s (%d行 x %d列)", filepath, len(df), len(df.columns))
+                return filepath
 
-            return filepath
+            if export_dataframe_streaming(df, filepath, sheet_name=sheet_name):
+                return filepath
+            return None
 
     except Exception as e:
         logger.error("导出失败: %s", e)
